@@ -1,11 +1,19 @@
-import React from 'react'
+import React from "react";
 
 type ImageBlockProps = {
-	src?: string
-	alt?: string
-	width?: string
-}
+  src?: string;
+  alt?: string;
+  width?: string;
+};
 
-export const ImageBlock = ({ src = '', alt = '', width = '100%' }: ImageBlockProps) => (
-	<img src={src} alt={alt} style={{ width, maxWidth: '100%', display: 'block' }} />
-)
+export const ImageBlock = ({
+  src = "",
+  alt = "",
+  width = "100%",
+}: ImageBlockProps) => (
+  <img
+    src={src}
+    alt={alt}
+    style={{ width, maxWidth: "100%", display: "block" }}
+  />
+);

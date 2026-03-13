@@ -1,9 +1,9 @@
-import React from 'react'
+import React from "react";
 
 type HTMLBlockProps = {
-	html?: string
-}
+  html?: string;
+};
 
-export const HTMLBlock = ({ html = '' }: HTMLBlockProps) => (
-	<div dangerouslySetInnerHTML={{ __html: html }} />
-)
+export const HTMLBlock = ({ html = "" }: HTMLBlockProps) => (
+  <div dangerouslySetInnerHTML={{ __html: html }} />
+);

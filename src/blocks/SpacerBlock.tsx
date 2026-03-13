@@ -1,9 +1,9 @@
-import React from 'react'
+import React from "react";
 
 type SpacerBlockProps = {
-	height?: string
-}
+  height?: string;
+};
 
-export const SpacerBlock = ({ height = '48px' }: SpacerBlockProps) => (
-	<div style={{ height }} />
-)
+export const SpacerBlock = ({ height = "48px" }: SpacerBlockProps) => (
+  <div style={{ height }} />
+);

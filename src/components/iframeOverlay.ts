@@ -1,20 +1,22 @@
 export const iframeOverlayScript = `
 (function() {
+    let inspectMode = false;
+
     const hoverOverlay = document.createElement('div');
     hoverOverlay.id = '__studio-hover-overlay';
     Object.assign(hoverOverlay.style, {
-        position: 'fixed', pointerEvents: 'none', border: '2px solid #4f9eff',
-        backgroundColor: 'rgba(79, 158, 255, 0.1)', zIndex: '99998',
-        display: 'none', transition: 'all 0.1s ease'
+        position: 'fixed', pointerEvents: 'none', border: '2px solid #89b4fa',
+        backgroundColor: 'rgba(137, 180, 250, 0.08)', zIndex: '99998',
+        display: 'none', transition: 'all 0.05s ease', borderRadius: '2px'
     });
     document.body.appendChild(hoverOverlay);
 
     const selectOverlay = document.createElement('div');
     selectOverlay.id = '__studio-select-overlay';
     Object.assign(selectOverlay.style, {
-        position: 'fixed', pointerEvents: 'none', border: '2px solid #ff6b35',
-        backgroundColor: 'rgba(255, 107, 53, 0.1)', zIndex: '99999',
-        display: 'none'
+        position: 'fixed', pointerEvents: 'none', border: '2px solid #cba6f7',
+        backgroundColor: 'rgba(203, 166, 247, 0.08)', zIndex: '99999',
+        display: 'none', borderRadius: '2px'
     });
     document.body.appendChild(selectOverlay);
 
@@ -23,8 +25,9 @@ export const iframeOverlayScript = `
     Object.assign(label.style, {
         position: 'fixed', pointerEvents: 'none', zIndex: '100000',
         backgroundColor: '#1e1e2e', color: '#cdd6f4', fontSize: '11px',
-        fontFamily: 'monospace', padding: '2px 6px', borderRadius: '3px',
-        display: 'none', whiteSpace: 'nowrap'
+        fontFamily: 'monospace', padding: '2px 8px', borderRadius: '3px',
+        display: 'none', whiteSpace: 'nowrap', border: '1px solid #45475a',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
     });
     document.body.appendChild(label);
 
@@ -34,8 +37,11 @@ export const iframeOverlayScript = `
         let text = el.tagName.toLowerCase();
         if (el.id) text += '#' + el.id;
         if (el.className && typeof el.className === 'string') {
-            text += '.' + el.className.trim().split(/\\s+/).join('.');
+            const classes = el.className.trim().split(/\\s+/).filter(function(c) { return !c.startsWith('__studio'); });
+            if (classes.length) text += '.' + classes.join('.');
         }
+        const rect = el.getBoundingClientRect();
+        text += '  ' + Math.round(rect.width) + '\\u00d7' + Math.round(rect.height);
         return text;
     }
 
@@ -64,17 +70,23 @@ export const iframeOverlayScript = `
     }
 
     document.addEventListener('mousemove', function(e) {
+        if (!inspectMode) {
+            hoverOverlay.style.display = 'none';
+            label.style.display = 'none';
+            return;
+        }
         const el = e.target;
         if (!el || el.id?.startsWith('__studio')) return;
         const rect = el.getBoundingClientRect();
         positionOverlay(hoverOverlay, rect);
         label.textContent = getLabelText(el);
         label.style.left = rect.left + 'px';
-        label.style.top = Math.max(0, rect.top - 20) + 'px';
+        label.style.top = Math.max(0, rect.top - 24) + 'px';
         label.style.display = 'block';
     });
 
     document.addEventListener('click', function(e) {
+        if (!inspectMode) return;
         e.preventDefault();
         e.stopPropagation();
         const el = e.target;
@@ -88,25 +100,33 @@ export const iframeOverlayScript = `
         }, '*');
     }, true);
 
-    document.addEventListener('click', function(e) {
-        if (e.target.tagName === 'A' || e.target.closest('a')) {
-            e.preventDefault();
-        }
-    }, true);
-
     document.addEventListener('mouseleave', function() {
         hoverOverlay.style.display = 'none';
         label.style.display = 'none';
     });
 
     window.addEventListener('message', function(e) {
+        if (e.data?.type === '__studio_set_inspect_mode') {
+            inspectMode = e.data.enabled;
+            if (!inspectMode) {
+                hoverOverlay.style.display = 'none';
+                label.style.display = 'none';
+            }
+            document.body.style.cursor = inspectMode ? 'crosshair' : '';
+            return;
+        }
+        if (e.data?.type === '__studio_deselect') {
+            selectedElement = null;
+            selectOverlay.style.display = 'none';
+            return;
+        }
         if (!selectedElement) return;
-        if (e.data.type === '__studio_update_text') {
+        if (e.data?.type === '__studio_update_text') {
             selectedElement.textContent = e.data.value;
         }
-        if (e.data.type === '__studio_update_attr') {
+        if (e.data?.type === '__studio_update_attr') {
             selectedElement.setAttribute(e.data.name, e.data.value);
         }
     });
 })();
-`
+`;
