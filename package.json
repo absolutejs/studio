@@ -1,0 +1,34 @@
+{
+	"name": "@absolutejs/studio",
+	"version": "0.0.0",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"build:studio": "bun src/build.ts",
+		"dev": "cd example && absolute dev src/backend/server.ts --config absolute.config.ts",
+		"studio": "bun run build:studio && ABSOLUTE_CONFIG=absolute.config.ts bun src/cli.ts example --react example/src/frontend",
+		"format": "absolute prettier --write \"**/*.{ts,tsx,css,json}\"",
+		"lint": "absolute eslint",
+		"test": "bun test",
+		"typecheck": "bun run tsc --noEmit"
+	},
+	"dependencies": {
+		"@absolutejs/absolute": "latest",
+		"@elysiajs/eden": "latest",
+		"@elysiajs/static": "latest",
+		"elysia": "latest",
+		"react": "latest",
+		"react-dom": "latest"
+	},
+	"devDependencies": {
+		"@eslint/js": "latest",
+		"@stylistic/eslint-plugin": "latest",
+		"@types/bun": "^1.3.10",
+		"@types/react": "latest",
+		"@types/react-dom": "latest",
+		"@typescript-eslint/parser": "latest",
+		"eslint": "latest",
+		"typescript": "latest",
+		"typescript-eslint": "latest"
+	}
+}

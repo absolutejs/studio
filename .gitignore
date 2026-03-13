@@ -1,0 +1,15 @@
+node_modules/
+build/
+example/build/
+example/.absolutejs/
+.absolutejs/
+.studio/
+dist/
+src/indexes/
+*.env
+*.log
+*.bun
+*.lockb
+.DS_Store
+CLAUDE.md
+.claude/
