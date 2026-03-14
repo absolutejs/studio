@@ -9,7 +9,6 @@ export const iframeOverlayScript = `
         backgroundColor: 'rgba(137, 180, 250, 0.08)', zIndex: '99998',
         display: 'none', transition: 'all 0.05s ease', borderRadius: '2px'
     });
-    document.body.appendChild(hoverOverlay);
 
     const selectOverlay = document.createElement('div');
     selectOverlay.id = '__studio-select-overlay';
@@ -18,7 +17,6 @@ export const iframeOverlayScript = `
         backgroundColor: 'rgba(203, 166, 247, 0.08)', zIndex: '99999',
         display: 'none', borderRadius: '2px'
     });
-    document.body.appendChild(selectOverlay);
 
     const label = document.createElement('div');
     label.id = '__studio-label';
@@ -29,7 +27,14 @@ export const iframeOverlayScript = `
         display: 'none', whiteSpace: 'nowrap', border: '1px solid #45475a',
         boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
     });
-    document.body.appendChild(label);
+
+    function ensureOverlays() {
+        if (!hoverOverlay.parentNode) document.body.appendChild(hoverOverlay);
+        if (!selectOverlay.parentNode) document.body.appendChild(selectOverlay);
+        if (!label.parentNode) document.body.appendChild(label);
+    }
+
+    ensureOverlays();
 
     let selectedElement = null;
 
@@ -75,6 +80,7 @@ export const iframeOverlayScript = `
             label.style.display = 'none';
             return;
         }
+        ensureOverlays();
         const el = e.target;
         if (!el || el.id?.startsWith('__studio')) return;
         const rect = el.getBoundingClientRect();
@@ -105,8 +111,15 @@ export const iframeOverlayScript = `
         label.style.display = 'none';
     });
 
+    window.addEventListener('resize', function() {
+        if (selectedElement && selectOverlay.style.display !== 'none') {
+            positionOverlay(selectOverlay, selectedElement.getBoundingClientRect());
+        }
+    });
+
     window.addEventListener('message', function(e) {
         if (e.data?.type === '__studio_set_inspect_mode') {
+            ensureOverlays();
             inspectMode = e.data.enabled;
             if (!inspectMode) {
                 hoverOverlay.style.display = 'none';

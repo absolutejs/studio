@@ -1393,13 +1393,6 @@ const StudioEditorInner = ({
 
   const handleCloseInspector = useCallback(() => {
     setShowInspector(false);
-    setSelectedElement(null);
-    if (iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        { type: "__studio_deselect" },
-        "*",
-      );
-    }
   }, []);
 
   const handleSplitMouseDown = useCallback((e: React.MouseEvent) => {
