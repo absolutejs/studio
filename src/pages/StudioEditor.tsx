@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import {
   QueryClient,
   QueryClientProvider,
@@ -62,107 +63,548 @@ type EditorTab = {
   framework?: string;
 };
 
-const ELEMENT_CATEGORIES: Record<string, string[]> = {
-  Layout: [
-    "div",
-    "section",
-    "article",
-    "aside",
-    "header",
-    "footer",
-    "main",
-    "nav",
-    "figure",
-    "figcaption",
-    "details",
-    "summary",
-    "dialog",
+interface ElementInfo {
+  tag: string;
+  description: string;
+}
+
+const ELEMENT_CATEGORIES: Record<string, ElementInfo[]> = {
+  "Content sectioning": [
+    {
+      tag: "div",
+      description:
+        "The generic container for flow content. It has no effect on the content or layout until styled using CSS.",
+    },
+    {
+      tag: "section",
+      description: "Represents a generic standalone section of a document.",
+    },
+    {
+      tag: "article",
+      description:
+        "Represents a self-contained composition in a document, page, application, or site, intended to be independently distributable or reusable.",
+    },
+    {
+      tag: "aside",
+      description:
+        "Represents a portion of a document whose content is only indirectly related to the document's main content.",
+    },
+    {
+      tag: "header",
+      description:
+        "Represents introductory content, typically a group of introductory or navigational aids.",
+    },
+    {
+      tag: "footer",
+      description:
+        "Represents a footer for its nearest ancestor sectioning content or sectioning root element.",
+    },
+    {
+      tag: "main",
+      description: "Represents the dominant content of the body of a document.",
+    },
+    {
+      tag: "nav",
+      description:
+        "Represents a section of a page whose purpose is to provide navigation links.",
+    },
+    { tag: "h1", description: "Represents the highest section level heading." },
+    { tag: "h2", description: "Represents the second level section heading." },
+    { tag: "h3", description: "Represents the third level section heading." },
+    { tag: "h4", description: "Represents the fourth level section heading." },
+    { tag: "h5", description: "Represents the fifth level section heading." },
+    {
+      tag: "h6",
+      description: "Represents the sixth and lowest section level heading.",
+    },
+    {
+      tag: "hgroup",
+      description:
+        "Represents a heading grouped with any secondary content, such as subheadings, an alternative title, or a tagline.",
+    },
+    {
+      tag: "address",
+      description:
+        "Indicates that the enclosed HTML provides contact information for a person or people, or for an organization.",
+    },
+    {
+      tag: "search",
+      description:
+        "Represents a part that contains a set of form controls or other content related to performing a search or filtering operation.",
+    },
   ],
-  Text: [
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "p",
-    "span",
-    "a",
-    "strong",
-    "em",
-    "b",
-    "i",
-    "u",
-    "s",
-    "small",
-    "mark",
-    "sub",
-    "sup",
-    "abbr",
-    "cite",
-    "code",
-    "pre",
-    "blockquote",
-    "q",
-    "kbd",
-    "samp",
-    "var",
-    "time",
-    "data",
-    "ruby",
-    "rt",
-    "rp",
-    "bdi",
-    "bdo",
-    "wbr",
-    "br",
-    "hr",
+  "Text content": [
+    { tag: "p", description: "Represents a paragraph." },
+    {
+      tag: "span",
+      description:
+        "A generic inline container for phrasing content, which does not inherently represent anything.",
+    },
+    {
+      tag: "a",
+      description:
+        "Together with its href attribute, creates a hyperlink to web pages, files, email addresses, locations within the current page, or anything else a URL can address.",
+    },
+    {
+      tag: "strong",
+      description:
+        "Indicates that its contents have strong importance, seriousness, or urgency.",
+    },
+    { tag: "em", description: "Marks text that has stress emphasis." },
+    {
+      tag: "b",
+      description:
+        "Used to draw the reader's attention to the element's contents, which are not otherwise granted special importance.",
+    },
+    {
+      tag: "i",
+      description:
+        "Represents a range of text that is set off from the normal text for some reason, such as idiomatic text, technical terms, and taxonomical designations.",
+    },
+    {
+      tag: "u",
+      description:
+        "Represents a span of inline text which should be rendered in a way that indicates a non-textual annotation.",
+    },
+    {
+      tag: "s",
+      description:
+        "Renders text with a strikethrough. Use to represent things that are no longer relevant or no longer accurate.",
+    },
+    {
+      tag: "small",
+      description:
+        "Represents side-comments and small print, like copyright and legal text.",
+    },
+    {
+      tag: "mark",
+      description:
+        "Represents text which is marked or highlighted for reference or notation purposes.",
+    },
+    {
+      tag: "br",
+      description: "Produces a line break in text (carriage-return).",
+    },
+    {
+      tag: "hr",
+      description:
+        "Represents a thematic break between paragraph-level elements.",
+    },
+    {
+      tag: "blockquote",
+      description: "Indicates that the enclosed text is an extended quotation.",
+    },
+    {
+      tag: "q",
+      description:
+        "Indicates that the enclosed text is a short inline quotation.",
+    },
+    {
+      tag: "pre",
+      description:
+        "Represents preformatted text which is to be presented exactly as written in the HTML file.",
+    },
+    {
+      tag: "code",
+      description:
+        "Displays its contents styled in a fashion intended to indicate that the text is a short fragment of computer code.",
+    },
+    {
+      tag: "kbd",
+      description:
+        "Represents a span of inline text denoting textual user input from a keyboard, voice input, or any other text entry device.",
+    },
+    {
+      tag: "samp",
+      description:
+        "Used to enclose inline text which represents sample output from a computer program.",
+    },
+    {
+      tag: "var",
+      description:
+        "Represents the name of a variable in a mathematical expression or a programming context.",
+    },
+    { tag: "abbr", description: "Represents an abbreviation or acronym." },
+    {
+      tag: "cite",
+      description: "Used to mark up the title of a creative work.",
+    },
+    {
+      tag: "dfn",
+      description:
+        "Used to indicate the term being defined within the context of a definition phrase or sentence.",
+    },
+    {
+      tag: "sub",
+      description:
+        "Specifies inline text which should be displayed as subscript.",
+    },
+    {
+      tag: "sup",
+      description:
+        "Specifies inline text which is to be displayed as superscript.",
+    },
+    { tag: "time", description: "Represents a specific period in time." },
+    {
+      tag: "data",
+      description:
+        "Links a given piece of content with a machine-readable translation.",
+    },
+    {
+      tag: "ruby",
+      description:
+        "Represents small annotations rendered above, below, or next to base text, usually used for showing pronunciation of East Asian characters.",
+    },
+    {
+      tag: "rt",
+      description: "Specifies the ruby text component of a ruby annotation.",
+    },
+    {
+      tag: "rp",
+      description:
+        "Used to provide fall-back parentheses for browsers that do not support ruby annotations.",
+    },
+    {
+      tag: "bdi",
+      description:
+        "Tells the browser's bidirectional algorithm to treat the text it contains in isolation from its surrounding text.",
+    },
+    {
+      tag: "bdo",
+      description:
+        "Overrides the current directionality of text, so that the text within is rendered in a different direction.",
+    },
+    {
+      tag: "wbr",
+      description:
+        "Represents a word break opportunity — a position within text where the browser may optionally break a line.",
+    },
+    {
+      tag: "figure",
+      description:
+        "Represents self-contained content, potentially with an optional caption specified using the figcaption element.",
+    },
+    {
+      tag: "figcaption",
+      description:
+        "Represents a caption or legend describing the rest of the contents of its parent figure element.",
+    },
+    {
+      tag: "ul",
+      description:
+        "Represents an unordered list of items, typically rendered as a bulleted list.",
+    },
+    {
+      tag: "ol",
+      description:
+        "Represents an ordered list of items — typically rendered as a numbered list.",
+    },
+    {
+      tag: "li",
+      description:
+        "Represents an item in a list. It must be contained in an ordered list, an unordered list, or a menu.",
+    },
+    {
+      tag: "dl",
+      description:
+        "Represents a description list. Common uses are to implement a glossary or to display metadata.",
+    },
+    {
+      tag: "dt",
+      description: "Specifies a term in a description or definition list.",
+    },
+    {
+      tag: "dd",
+      description:
+        "Provides the description, definition, or value for the preceding term in a description list.",
+    },
+    {
+      tag: "menu",
+      description:
+        "A semantic alternative to ul, representing an unordered list of items.",
+    },
   ],
-  Lists: ["ul", "ol", "li", "dl", "dt", "dd", "menu"],
-  Table: [
-    "table",
-    "thead",
-    "tbody",
-    "tfoot",
-    "tr",
-    "th",
-    "td",
-    "caption",
-    "colgroup",
-    "col",
+  Forms: [
+    {
+      tag: "form",
+      description:
+        "Represents a document section containing interactive controls for submitting information.",
+    },
+    {
+      tag: "input",
+      description:
+        "Used to create interactive controls for web-based forms to accept data from the user.",
+    },
+    {
+      tag: "textarea",
+      description: "Represents a multi-line plain-text editing control.",
+    },
+    {
+      tag: "select",
+      description: "Represents a control that provides a menu of options.",
+    },
+    {
+      tag: "option",
+      description:
+        "Used to define an item contained in a select, an optgroup, or a datalist element.",
+    },
+    {
+      tag: "optgroup",
+      description: "Creates a grouping of options within a select element.",
+    },
+    {
+      tag: "button",
+      description:
+        "An interactive element activated by a user to perform an action, such as submitting a form or opening a dialog.",
+    },
+    {
+      tag: "label",
+      description: "Represents a caption for an item in a user interface.",
+    },
+    {
+      tag: "fieldset",
+      description:
+        "Used to group several controls as well as labels within a web form.",
+    },
+    {
+      tag: "legend",
+      description:
+        "Represents a caption for the content of its parent fieldset.",
+    },
+    {
+      tag: "datalist",
+      description:
+        "Contains a set of option elements that represent the permissible or recommended options available to choose from within other controls.",
+    },
+    {
+      tag: "output",
+      description:
+        "Container element into which a site or app can inject the results of a calculation or the outcome of a user action.",
+    },
+    {
+      tag: "progress",
+      description:
+        "Displays an indicator showing the completion progress of a task, typically displayed as a progress bar.",
+    },
+    {
+      tag: "meter",
+      description:
+        "Represents either a scalar value within a known range or a fractional value.",
+    },
   ],
-  Form: [
-    "form",
-    "input",
-    "textarea",
-    "select",
-    "option",
-    "optgroup",
-    "button",
-    "label",
-    "fieldset",
-    "legend",
-    "datalist",
-    "output",
-    "progress",
-    "meter",
+  "Table content": [
+    {
+      tag: "table",
+      description:
+        "Represents tabular data — information presented in a two-dimensional table comprised of rows and columns of cells.",
+    },
+    {
+      tag: "thead",
+      description:
+        "Encapsulates a set of table rows indicating that they comprise the head of a table.",
+    },
+    {
+      tag: "tbody",
+      description:
+        "Encapsulates a set of table rows indicating that they comprise the body of a table's main data.",
+    },
+    {
+      tag: "tfoot",
+      description:
+        "Encapsulates a set of table rows indicating that they comprise the foot of a table.",
+    },
+    { tag: "tr", description: "Defines a row of cells in a table." },
+    {
+      tag: "th",
+      description: "Defines a cell as the header of a group of table cells.",
+    },
+    { tag: "td", description: "Defines a cell of a table that contains data." },
+    {
+      tag: "caption",
+      description: "Specifies the caption (or title) of a table.",
+    },
+    {
+      tag: "colgroup",
+      description: "Defines a group of columns within a table.",
+    },
+    {
+      tag: "col",
+      description:
+        "Defines one or more columns in a column group represented by its parent colgroup element.",
+    },
   ],
-  Media: [
-    "img",
-    "video",
-    "audio",
-    "source",
-    "track",
-    "picture",
-    "canvas",
-    "svg",
-    "iframe",
-    "embed",
-    "object",
-    "map",
-    "area",
+  "Image and multimedia": [
+    { tag: "img", description: "Embeds an image into the document." },
+    {
+      tag: "video",
+      description:
+        "Embeds a media player which supports video playback into the document.",
+    },
+    { tag: "audio", description: "Used to embed sound content in documents." },
+    {
+      tag: "picture",
+      description:
+        "Contains zero or more source elements and one img element to offer alternative versions of an image for different display/device scenarios.",
+    },
+    {
+      tag: "source",
+      description:
+        "Specifies multiple media resources for the picture, audio, or video element.",
+    },
+    {
+      tag: "track",
+      description:
+        "Used as a child of audio and video. Lets you specify timed text tracks, for example to handle subtitles.",
+    },
+    {
+      tag: "map",
+      description:
+        "Used with area elements to define an image map (a clickable link area).",
+    },
+    {
+      tag: "area",
+      description:
+        "Defines an area inside an image map that has predefined clickable areas.",
+    },
   ],
-  Semantic: ["address", "hgroup", "search"],
+  "Embedded content": [
+    {
+      tag: "iframe",
+      description:
+        "Represents a nested browsing context, embedding another HTML page into the current one.",
+    },
+    {
+      tag: "embed",
+      description:
+        "Embeds external content at the specified point in the document.",
+    },
+    {
+      tag: "object",
+      description:
+        "Represents an external resource, which can be treated as an image, a nested browsing context, or a resource to be handled by a plugin.",
+    },
+    {
+      tag: "source",
+      description:
+        "Specifies multiple media resources for the picture, audio, or video element.",
+    },
+  ],
+  "Interactive elements": [
+    {
+      tag: "details",
+      description:
+        "Creates a disclosure widget in which information is visible only when the widget is toggled into an open state.",
+    },
+    {
+      tag: "summary",
+      description:
+        "Specifies a summary, caption, or legend for a details element's disclosure box.",
+    },
+    {
+      tag: "dialog",
+      description:
+        "Represents a dialog box or other interactive component, such as a dismissible alert, inspector, or subwindow.",
+    },
+  ],
+  Scripting: [
+    {
+      tag: "script",
+      description:
+        "Used to embed executable code or data; typically used to embed or refer to JavaScript code.",
+    },
+    {
+      tag: "noscript",
+      description:
+        "Defines a section of HTML to be inserted if a script type on the page is unsupported or if scripting is turned off.",
+    },
+    {
+      tag: "canvas",
+      description:
+        "Container element to use with the canvas scripting API or the WebGL API to draw graphics and animations.",
+    },
+  ],
+  "SVG and MathML": [
+    {
+      tag: "svg",
+      description:
+        "Container defining a new coordinate system and viewport. Used as the outermost element of SVG documents or to embed SVG fragments.",
+    },
+    {
+      tag: "math",
+      description:
+        "The top-level element in MathML. Every valid MathML instance must be wrapped in it.",
+    },
+  ],
+  "Demarcating edits": [
+    {
+      tag: "del",
+      description:
+        "Represents a range of text that has been deleted from a document.",
+    },
+    {
+      tag: "ins",
+      description:
+        "Represents a range of text that has been added to a document.",
+    },
+  ],
+  "Web Components": [
+    {
+      tag: "slot",
+      description:
+        "A placeholder inside a web component that you can fill with your own markup, letting you create separate DOM trees and present them together.",
+    },
+    {
+      tag: "template",
+      description:
+        "A mechanism for holding HTML that is not rendered immediately when a page is loaded but may be instantiated subsequently during runtime using JavaScript.",
+    },
+  ],
+  "Document metadata": [
+    {
+      tag: "head",
+      description:
+        "Contains machine-readable information (metadata) about the document, like its title, scripts, and style sheets.",
+    },
+    {
+      tag: "title",
+      description:
+        "Defines the document's title that is shown in a browser's title bar or a page's tab.",
+    },
+    {
+      tag: "meta",
+      description:
+        "Represents metadata that cannot be represented by other HTML meta-related elements.",
+    },
+    {
+      tag: "link",
+      description:
+        "Specifies relationships between the current document and an external resource. Most commonly used to link to CSS.",
+    },
+    {
+      tag: "style",
+      description:
+        "Contains style information for a document or part of a document. It contains CSS.",
+    },
+    {
+      tag: "base",
+      description:
+        "Specifies the base URL to use for all relative URLs in a document.",
+    },
+  ],
+  "Sectioning root": [
+    {
+      tag: "body",
+      description:
+        "Represents the content of an HTML document. There can be only one such element in a document.",
+    },
+  ],
+  "Main root": [
+    {
+      tag: "html",
+      description:
+        "Represents the root (top-level element) of an HTML document. All other elements must be descendants of this element.",
+    },
+  ],
 };
 
 // Inline SVG icons
@@ -321,6 +763,11 @@ const StudioEditorInner = ({
   const [scriptOutput, setScriptOutput] = useState("");
   const [runningScript, setRunningScript] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [elementTooltip, setElementTooltip] = useState<{
+    text: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const [showPages, setShowPages] = useState(false);
   const [newPageName, setNewPageName] = useState("");
   const [newPageRoute, setNewPageRoute] = useState("");
@@ -1003,12 +1450,33 @@ const StudioEditorInner = ({
     .map(([category, elements]) => {
       const filtered = searchQuery
         ? elements.filter((el) =>
-            el.toLowerCase().includes(searchQuery.toLowerCase()),
+            el.tag.toLowerCase().includes(searchQuery.toLowerCase()),
           )
         : elements;
-      return [category, filtered] as [string, string[]];
+      return [category, filtered] as [string, ElementInfo[]];
     })
     .filter(([, elements]) => elements.length > 0);
+
+  const filterComponentTree = useCallback(
+    (nodes: ComponentTreeNode[], query: string): ComponentTreeNode[] => {
+      if (!query) return nodes;
+      const q = query.toLowerCase();
+      return nodes.reduce<ComponentTreeNode[]>((acc, node) => {
+        if (node.children) {
+          const filtered = filterComponentTree(node.children, query);
+          if (filtered.length > 0) acc.push({ ...node, children: filtered });
+        } else if (node.name.toLowerCase().includes(q)) {
+          acc.push(node);
+        }
+        return acc;
+      }, []);
+    },
+    [],
+  );
+
+  const filteredCustomComponents = searchQuery
+    ? filterComponentTree(customComponents, searchQuery)
+    : customComponents;
 
   const HIDDEN_SCRIPTS = new Set(["dev", "start", "build"]);
   const FEATURED_SCRIPTS: Record<
@@ -1473,41 +1941,45 @@ const StudioEditorInner = ({
                 />
                 <div className="studio-elements-list">
                   {/* Custom section — only for component-based frameworks */}
-                  {hasComponents && (
-                    <div>
-                      <div
-                        className="studio-element-category studio-element-category-toggle"
-                        onClick={() => toggleCategory("Custom")}
-                      >
-                        <span
-                          className={`studio-category-chevron ${collapsedCategories.has("Custom") ? "" : "studio-category-chevron-open"}`}
+                  {hasComponents &&
+                    (!searchQuery || filteredCustomComponents.length > 0) && (
+                      <div>
+                        <div
+                          className="studio-element-category studio-element-category-toggle"
+                          onClick={() => toggleCategory("Custom")}
                         >
-                          &#9654;
-                        </span>
-                        <span>Custom</span>
-                        <span className="studio-category-count">
-                          {countComponentLeaves(customComponents)}
-                        </span>
-                      </div>
-                      {!collapsedCategories.has("Custom") && (
-                        <div className="studio-component-tree">
-                          {customComponents.length === 0 ? (
-                            <div className="studio-element-item studio-text-muted">
-                              No components found
-                            </div>
-                          ) : (
-                            <ComponentTree
-                              nodes={flattenComponentTree(customComponents)}
-                              collapsedState={[
-                                componentFolderCollapsed,
-                                toggleComponentFolder,
-                              ]}
-                            />
-                          )}
+                          <span
+                            className={`studio-category-chevron ${collapsedCategories.has("Custom") ? "" : "studio-category-chevron-open"}`}
+                          >
+                            &#9654;
+                          </span>
+                          <span>Custom</span>
+                          <span className="studio-category-count">
+                            {countComponentLeaves(filteredCustomComponents)}
+                          </span>
                         </div>
-                      )}
-                    </div>
-                  )}
+                        {(!collapsedCategories.has("Custom") ||
+                          searchQuery) && (
+                          <div className="studio-component-tree">
+                            {filteredCustomComponents.length === 0 ? (
+                              <div className="studio-element-item studio-text-muted">
+                                No components found
+                              </div>
+                            ) : (
+                              <ComponentTree
+                                nodes={flattenComponentTree(
+                                  filteredCustomComponents,
+                                )}
+                                collapsedState={[
+                                  componentFolderCollapsed,
+                                  toggleComponentFolder,
+                                ]}
+                              />
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                   {/* HTML Element categories */}
                   {filteredCategories.map(([category, elements]) => (
@@ -1526,20 +1998,59 @@ const StudioEditorInner = ({
                           {elements.length}
                         </span>
                       </div>
-                      {!collapsedCategories.has(category) &&
+                      {(!collapsedCategories.has(category) || searchQuery) &&
                         elements.map((el) => (
                           <div
                             className="studio-element-item"
                             draggable
-                            key={el}
+                            key={el.tag}
                             onDragStart={(e) => {
                               e.dataTransfer.setData(
                                 "text/plain",
-                                `<${el}></${el}>`,
+                                `<${el.tag}></${el.tag}>`,
                               );
                             }}
                           >
-                            &lt;{el}&gt;
+                            <span>&lt;{el.tag}&gt;</span>
+                            <span
+                              className="studio-element-info-icon"
+                              onMouseEnter={(e) => {
+                                const rect =
+                                  e.currentTarget.getBoundingClientRect();
+                                setElementTooltip({
+                                  text: el.description,
+                                  x: rect.right + 8,
+                                  y: rect.top + rect.height / 2,
+                                });
+                              }}
+                              onMouseLeave={() => setElementTooltip(null)}
+                            >
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                              >
+                                <circle
+                                  cx="8"
+                                  cy="8"
+                                  r="7"
+                                  stroke="currentColor"
+                                  strokeWidth="1.2"
+                                />
+                                <text
+                                  x="8"
+                                  y="12"
+                                  textAnchor="middle"
+                                  fill="currentColor"
+                                  fontSize="10"
+                                  fontFamily="serif"
+                                  fontStyle="italic"
+                                >
+                                  i
+                                </text>
+                              </svg>
+                            </span>
                           </div>
                         ))}
                     </div>
@@ -1547,6 +2058,22 @@ const StudioEditorInner = ({
                 </div>
               </div>
             )}
+
+            {/* Element tooltip portal */}
+            {elementTooltip &&
+              createPortal(
+                <div
+                  className="studio-element-tooltip"
+                  style={{
+                    left: elementTooltip.x,
+                    top: elementTooltip.y,
+                    transform: "translateY(-50%)",
+                  }}
+                >
+                  {elementTooltip.text}
+                </div>,
+                document.body,
+              )}
 
             {/* Main area */}
             <div
