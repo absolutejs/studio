@@ -6,16 +6,17 @@
   "scripts": {
     "build:studio": "rm -rf build && bun src/build.ts",
     "dev": "cd example && absolute dev src/backend/server.ts --config absolute.config.ts",
-    "studio": "bun run build:studio && NODE_ENV=production ABSOLUTE_CONFIG=absolute.config.ts bun src/cli.ts example --react example/src/frontend",
-    "format": "absolute prettier --write \"**/*.{ts,tsx,css,json}\"",
+    "studio": "bun run build:studio && NODE_ENV=production ABSOLUTE_CONFIG=absolute.config.ts bun src/cli.ts example --config example/absolute.config.ts",
+    "format": "absolute prettier --write \"**/*.{ts,tsx,svelte,vue,css,json}\"",
     "lint": "absolute eslint",
     "test": "bun test",
     "typecheck": "bun run tsc --noEmit"
   },
   "dependencies": {
-    "@absolutejs/absolute": "^0.18.1",
+    "@absolutejs/absolute": "0.18.3-beta.8",
     "@elysiajs/eden": "^1.4.8",
     "@elysiajs/static": "^1.4.7",
+    "@tanstack/react-query": "^5.90.21",
     "elysia": "^1.4.27",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
@@ -29,6 +30,7 @@
     "@typescript-eslint/parser": "^8.57.0",
     "eslint": "^10.0.3",
     "prettier": "^3.8.1",
+    "prettier-plugin-svelte": "^3.4.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.57.0"
   }

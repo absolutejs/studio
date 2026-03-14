@@ -1,8 +1,19 @@
-import { join, dirname, resolve } from "path";
+import { join, dirname, resolve, relative, basename } from "path";
 import { Glob } from "bun";
+import {
+  mkdirSync,
+  existsSync,
+  cpSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+} from "fs";
 import type { StudioFramework } from "../types/studio";
+import { getFrameworkMeta, ALL_FRAMEWORKS } from "./frameworkRegistry";
+import type { FrameworkContext } from "./frameworkRegistry";
 
-type ProjectConfig = {
+export type ProjectConfig = {
   reactDirectory?: string;
   svelteDirectory?: string;
   vueDirectory?: string;
@@ -13,94 +24,785 @@ type ProjectConfig = {
 
 type ScannedPage = {
   name: string;
-  path: string;
+  route: string;
   framework: StudioFramework;
+  file?: string;
 };
 
-const FRAMEWORK_GLOBS: {
-  key: keyof ProjectConfig;
-  framework: StudioFramework;
-  pattern: string;
-}[] = [
-  {
-    key: "reactDirectory",
-    framework: "react",
-    pattern: "pages/*.tsx",
-  },
-  {
-    key: "svelteDirectory",
-    framework: "svelte",
-    pattern: "pages/*.svelte",
-  },
-  {
-    key: "vueDirectory",
-    framework: "vue",
-    pattern: "pages/*.vue",
-  },
-  {
-    key: "htmlDirectory",
-    framework: "html",
-    pattern: "pages/*.html",
-  },
-  {
-    key: "htmxDirectory",
-    framework: "htmx",
-    pattern: "pages/*.html",
-  },
-  {
-    key: "angularDirectory",
-    framework: "angular",
-    pattern: "pages/*.ts",
-  },
-];
+const PAGE_HANDLER_FRAMEWORK: Record<string, StudioFramework> = {
+  handleReactPageRequest: "react",
+  handleSveltePageRequest: "svelte",
+  handleVuePageRequest: "vue",
+  handleHTMLPageRequest: "html",
+  handleHTMXPageRequest: "htmx",
+  handleAngularPageRequest: "angular",
+};
 
-export const scanProjectPages = async (config: ProjectConfig) => {
+// Match .get('/route', ...<handler>(...)) patterns
+// Captures: (1) route, (2) handler name
+const ROUTE_RE =
+  /\.get\(\s*['"]([^'"]+)['"]\s*,\s*(?:async\s*)?\(?.*?\)?\s*=>\s*\n?\s*(handle(?:React|Svelte|Vue|HTML|HTMX|Angular)PageRequest)\b/g;
+
+/**
+ * Extract the page/component name from the handler call that follows a route match.
+ * Handles all framework patterns: direct component refs, vueImports.X, asset(), dynamic imports.
+ */
+const extractPageName = (source: string, matchEnd: number): string | null => {
+  // Get the text after the handler name — the opening paren and first argument
+  const rest = source.slice(matchEnd);
+
+  // React/Svelte/Vue direct component: handleXPageRequest(\n\t\tComponentName,
+  const componentMatch = rest.match(
+    /\(\s*\n?\s*(?:vueImports\.)?(\w+)\s*[,\n]/,
+  );
+  if (componentMatch) return componentMatch[1]!;
+
+  // HTML/HTMX asset: handleXPageRequest(asset(manifest, 'PageName'))
+  const assetMatch = rest.match(/\(\s*asset\(\s*\w+\s*,\s*['"](\w+)['"]\)/);
+  if (assetMatch) return assetMatch[1]!;
+
+  // Angular dynamic import: () => import('.../pages/page-name')
+  const importMatch = rest.match(
+    /\(\s*\(\)\s*=>\s*import\(['"].*\/pages\/([^'"]+)['"]\)/,
+  );
+  if (importMatch) {
+    // Angular uses kebab-case files → convert to PascalCase
+    return importMatch[1]!.replace(/(^|-)(\w)/g, (_, __, c: string) =>
+      c.toUpperCase(),
+    );
+  }
+
+  return null;
+};
+
+/** Find the project's server file. */
+const findServerFile = (projectDir: string): string | null => {
+  const candidates = [
+    join(projectDir, "src", "backend", "server.ts"),
+    join(projectDir, "src", "server.ts"),
+    join(projectDir, "server.ts"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+};
+
+/**
+ * Read a file and all its local imports (one level deep) into a single string.
+ */
+const readWithLocalImports = async (filePath: string): Promise<string> => {
+  const sources: string[] = [];
+  const content = await Bun.file(filePath).text();
+  sources.push(content);
+
+  const localImportRe = /import\s+.*?from\s+['"](\.[^'"]+)['"]/g;
+  let importMatch: RegExpExecArray | null;
+  while ((importMatch = localImportRe.exec(content)) !== null) {
+    const importPath = importMatch[1]!;
+    const dir = dirname(filePath);
+    let resolved = resolve(dir, importPath);
+
+    if (!/\.\w+$/.test(resolved)) {
+      for (const ext of [".ts", ".tsx", ".js", ".jsx"]) {
+        if (existsSync(`${resolved}${ext}`)) {
+          resolved = `${resolved}${ext}`;
+          break;
+        }
+      }
+    }
+
+    if (existsSync(resolved)) {
+      try {
+        sources.push(await Bun.file(resolved).text());
+      } catch {
+        // skip unreadable
+      }
+    }
+  }
+
+  return sources.join("\n");
+};
+
+/**
+ * Scan the user's server.ts (and local imports) for .get() routes
+ * that use one of the 6 absolutejs page handlers.
+ */
+export const scanProjectPages = async (
+  projectDir: string,
+  config?: ProjectConfig,
+) => {
   const pages: ScannedPage[] = [];
 
-  for (const { key, framework, pattern } of FRAMEWORK_GLOBS) {
-    const directory = config[key];
-    if (!directory) continue;
+  const serverPath = findServerFile(projectDir);
+  if (!serverPath) return pages;
 
-    const glob = new Glob(pattern);
-    for await (const match of glob.scan({ cwd: directory })) {
-      const name = match.replace(/^pages\//, "").replace(/\.[^.]+$/, "");
-      pages.push({
-        name,
-        path: join(directory, match),
-        framework,
-      });
+  const fullSource = await readWithLocalImports(serverPath);
+
+  let routeMatch: RegExpExecArray | null;
+  while ((routeMatch = ROUTE_RE.exec(fullSource)) !== null) {
+    const route = routeMatch[1]!;
+    const handler = routeMatch[2]!;
+    const framework = PAGE_HANDLER_FRAMEWORK[handler];
+    if (!framework) continue;
+
+    // Extract the actual component/page name from the handler call
+    const extractedName = extractPageName(
+      fullSource,
+      routeMatch.index + routeMatch[0].length,
+    );
+    const name =
+      extractedName ??
+      (route === "/"
+        ? "Home"
+        : route
+            .replace(/^\//, "")
+            .split("/")[0]!
+            .replace(/^./, (c) => c.toUpperCase()));
+
+    // Find the source file by name in the configured directory
+    let file: string | undefined;
+    if (config) {
+      const meta = getFrameworkMeta(framework);
+      const configKey = `${framework}Directory` as keyof ProjectConfig;
+      const dir = config[configKey];
+      if (dir) {
+        const candidate = join(dir, "pages", `${name}${meta.extension}`);
+        if (existsSync(candidate)) {
+          file = candidate;
+        }
+      }
     }
+
+    pages.push({ name, route, framework, file });
   }
 
   return pages;
 };
 
-export const createPageFile = async (name: string, directory: string) => {
-  const filePath = join(directory, "pages", `${name}.tsx`);
+const CONFIG_KEY_MAP: {
+  key: keyof ProjectConfig;
+  framework: StudioFramework;
+}[] = [
+  { key: "reactDirectory", framework: "react" },
+  { key: "svelteDirectory", framework: "svelte" },
+  { key: "vueDirectory", framework: "vue" },
+  { key: "htmlDirectory", framework: "html" },
+  { key: "htmxDirectory", framework: "htmx" },
+  { key: "angularDirectory", framework: "angular" },
+];
 
-  const template = `import { Head } from '@absolutejs/absolute/react'
+export const getConfiguredFrameworks = (
+  config: ProjectConfig,
+): { framework: StudioFramework; directory: string }[] => {
+  const result: { framework: StudioFramework; directory: string }[] = [];
+  for (const { key, framework } of CONFIG_KEY_MAP) {
+    const directory = config[key];
+    if (directory) result.push({ framework, directory });
+  }
+  return result;
+};
 
-type ${name}Props = {
-	cssPath?: string
-}
+// ── Template example page names per framework ────────────────
+const TEMPLATE_PAGE_NAMES: Record<StudioFramework, string> = {
+  react: "ReactExample",
+  svelte: "SvelteExample",
+  vue: "VueExample",
+  html: "HTMLExample",
+  htmx: "HTMXExample",
+  angular: "AngularExample",
+};
 
-export default function ${name}({ cssPath }: ${name}Props) {
-	return (
-		<html lang="en">
-			<Head cssPath={cssPath} title="${name}" />
-			<body>
-				<main>
-					<h1>${name}</h1>
-				</main>
-			</body>
-		</html>
-	)
-}
-`;
+// ── Page creation ─────────────────────────────────────────────
 
-  await Bun.write(filePath, template);
+/**
+ * Create a page file. If the template's example page exists (from scaffolding),
+ * rename it to the user's chosen name so they get the full example with counter/layout.
+ * Otherwise fall back to generating a minimal page from the template function.
+ */
+/** Convert PascalCase to kebab-case, e.g. "SvelteExample" → "svelte-example" */
+const toKebab = (str: string) =>
+  str.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+
+export const createPageFile = async (
+  name: string,
+  directory: string,
+  framework: StudioFramework,
+  stylesDirectory?: string,
+) => {
+  const meta = getFrameworkMeta(framework);
+  const pagesDir = join(directory, "pages");
+  const filePath = join(pagesDir, `${name}${meta.extension}`);
+
+  if (!existsSync(pagesDir)) {
+    mkdirSync(pagesDir, { recursive: true });
+  }
+
+  // Ensure CSS exists in the shared styles directory regardless of whether
+  // the page file was already copied from a template. The build scans
+  // stylesConfig for .css files and produces <PascalName>CSS manifest keys.
+  if (stylesDirectory && !meta.usesInlineCSS && meta.cssTemplate) {
+    const cssName = `${toKebab(name)}.css`;
+    const cssPath = join(stylesDirectory, cssName);
+    if (!existsSync(cssPath)) {
+      mkdirSync(stylesDirectory, { recursive: true });
+      await Bun.write(cssPath, meta.cssTemplate(name));
+    }
+  }
+
+  // If the file already exists, don't overwrite
+  if (existsSync(filePath)) return filePath;
+
+  // Generate a new page from the framework template
+  await Bun.write(filePath, meta.pageTemplate(name));
+
   return filePath;
 };
+
+// ── Full framework scaffolding ────────────────────────────────
+
+/**
+ * Resolve the path to the absolutejs-project template directory.
+ * Looks for create-absolutejs as a sibling of the studio package,
+ * or falls back to an explicit templateDir if provided.
+ */
+const resolveTemplateDir = (explicitDir?: string): string | null => {
+  if (explicitDir && existsSync(explicitDir)) return explicitDir;
+
+  // Walk up from this file to find the monorepo root
+  const candidates = [
+    resolve(__dirname, "../../create-absolutejs/absolutejs-project"),
+    resolve(__dirname, "../../../create-absolutejs/absolutejs-project"),
+    resolve(process.cwd(), "../create-absolutejs/absolutejs-project"),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, "src", "frontend"))) return candidate;
+  }
+
+  return null;
+};
+
+/**
+ * Copy the full framework directory from the template project.
+ */
+const copyFrameworkTemplate = (
+  framework: StudioFramework,
+  frameworkDir: string,
+  templateDir: string,
+) => {
+  const src = join(templateDir, "src", "frontend", framework);
+  if (!existsSync(src)) return;
+
+  cpSync(src, frameworkDir, {
+    recursive: true,
+    filter: (source) => {
+      // Skip Angular compiled directory
+      if (framework === "angular" && source.includes("/compiled")) return false;
+      // Skip pages/ and styles/ — Studio generates these via createPageFile
+      // to ensure the page template and route code stay in sync.
+      if (source.includes("/pages")) return false;
+      if (source.includes("/styles")) return false;
+      return true;
+    },
+  });
+};
+
+/**
+ * Ensure shared styles (reset.css) exist in the project.
+ */
+const ensureSharedStyles = (frameworkDir: string, templateDir: string) => {
+  // Place shared styles at the parent level of the framework directory
+  // e.g., if frameworkDir is src/frontend/react, styles go in src/frontend/styles
+  const dest = join(dirname(frameworkDir), "styles");
+  const resetDest = join(dest, "reset.css");
+
+  if (existsSync(resetDest)) return;
+
+  const src = join(templateDir, "src", "frontend", "styles");
+  if (existsSync(src)) {
+    cpSync(src, dest, { recursive: true });
+  }
+};
+
+/**
+ * Add framework dependencies to package.json and run bun install.
+ */
+const installFrameworkDeps = async (
+  framework: StudioFramework,
+  projectDir: string,
+  templateDir?: string | null,
+) => {
+  const meta = getFrameworkMeta(framework);
+  if (meta.dependencies.length === 0 && meta.devDependencies.length === 0) {
+    return;
+  }
+
+  const pkgPath = join(projectDir, "package.json");
+  const pkgContent = await Bun.file(pkgPath).text();
+  const pkg = JSON.parse(pkgContent) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+
+  // Read versions from the template package.json
+  let templateVersions: Record<string, string> = {};
+  const templatePkgPath = templateDir
+    ? join(templateDir, "package.json")
+    : null;
+  if (templatePkgPath && existsSync(templatePkgPath)) {
+    const templatePkg = JSON.parse(await Bun.file(templatePkgPath).text()) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    templateVersions = {
+      ...templatePkg.dependencies,
+      ...templatePkg.devDependencies,
+    };
+  }
+
+  let changed = false;
+
+  if (!pkg.dependencies) pkg.dependencies = {};
+  for (const dep of meta.dependencies) {
+    if (!pkg.dependencies[dep]) {
+      pkg.dependencies[dep] = templateVersions[dep] ?? "latest";
+      changed = true;
+    }
+  }
+
+  if (!pkg.devDependencies) pkg.devDependencies = {};
+  for (const dep of meta.devDependencies) {
+    if (!pkg.devDependencies[dep]) {
+      pkg.devDependencies[dep] = templateVersions[dep] ?? "latest";
+      changed = true;
+    }
+  }
+
+  if (!changed) return;
+
+  await Bun.write(pkgPath, JSON.stringify(pkg, null, "\t") + "\n");
+
+  const proc = Bun.spawn(["bun", "install"], {
+    cwd: projectDir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await proc.exited;
+};
+
+/**
+ * Create the vueImporter utility when both Vue and Svelte coexist.
+ * Their SFC types overlap, so Vue imports go through this indirection file.
+ */
+const ensureVueImporter = async (
+  projectDir: string,
+  scanConfig?: ProjectConfig,
+) => {
+  // Find the server file to place utils relative to it
+  const serverPath = findServerFile(projectDir);
+  const serverDir = serverPath
+    ? dirname(serverPath)
+    : join(projectDir, "src", "backend");
+  const utilsDir = join(serverDir, "utils");
+
+  const importerPath = join(utilsDir, "vueImporter.ts");
+  if (existsSync(importerPath)) return;
+
+  mkdirSync(utilsDir, { recursive: true });
+
+  // Derive the vue directory from config
+  const vueDir =
+    scanConfig?.vueDirectory ??
+    deriveFrameworkDirectory("vue", projectDir, scanConfig);
+  const relPath = computeRelativeDir(utilsDir, vueDir);
+
+  // Scan for Vue page components to include in the importer
+  const imports: string[] = [];
+  const exports: string[] = [];
+
+  const pagesDir = join(vueDir, "pages");
+  if (existsSync(pagesDir)) {
+    const glob = new Glob("*.vue");
+    for await (const match of glob.scan({ cwd: pagesDir })) {
+      const name = match.replace(/\.vue$/, "");
+      imports.push(`import ${name} from '${relPath}/pages/${match}';`);
+      exports.push(name);
+    }
+  }
+
+  if (imports.length === 0) {
+    imports.push(`import VueExample from '${relPath}/pages/VueExample.vue';`);
+    exports.push("VueExample");
+  }
+
+  const content = `${imports.join("\n")}\n\nexport const vueImports = { ${exports.join(", ")} } as const;\n`;
+  await Bun.write(importerPath, content);
+};
+
+/**
+ * Compute a relative path from one directory to another.
+ */
+const computeRelativeDir = (fromDir: string, toDir: string): string => {
+  const fromParts = resolve(fromDir).split("/");
+  const toParts = resolve(toDir).split("/");
+  let common = 0;
+  while (
+    common < fromParts.length &&
+    common < toParts.length &&
+    fromParts[common] === toParts[common]
+  ) {
+    common++;
+  }
+  const ups = fromParts.length - common;
+  const downs = toParts.slice(common);
+  return (ups > 0 ? "../".repeat(ups) : "./") + downs.join("/");
+};
+
+/**
+ * Add a page route + imports to the user's server.ts.
+ */
+export const addPageRoute = async (
+  pageName: string,
+  routePath: string,
+  framework: StudioFramework,
+  projectDir: string,
+  frameworkDir: string,
+  ctx?: FrameworkContext,
+) => {
+  const meta = getFrameworkMeta(framework);
+  const serverPath = findServerFile(projectDir);
+  if (!serverPath) return;
+
+  let content = await Bun.file(serverPath).text();
+
+  // Check if route already exists
+  if (
+    content.includes(`'${routePath}'`) ||
+    content.includes(`"${routePath}"`)
+  ) {
+    return;
+  }
+
+  const relDir = computeRelativeDir(dirname(serverPath), frameworkDir);
+
+  const params = { name: pageName, route: routePath, dir: relDir, ctx };
+
+  // Add imports — find the last import line
+  const neededImports = meta.pageImports(params);
+  const lines = content.split("\n");
+  let lastImportIndex = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]!.startsWith("import ")) {
+      lastImportIndex = i;
+    }
+  }
+
+  // Filter out imports that already exist
+  const newImports = neededImports.filter((imp) => {
+    const match = imp.match(/import\s+\{?\s*([^}]+)\}?\s+from/);
+    if (match) {
+      const names = match[1]!.split(",").map((n) => n.trim());
+      return !names.every((name) => content.includes(name));
+    }
+    return !content.includes(imp);
+  });
+
+  if (newImports.length > 0 && lastImportIndex >= 0) {
+    lines.splice(lastImportIndex + 1, 0, ...newImports);
+  }
+
+  content = lines.join("\n");
+
+  // HTMX needs scopedState middleware
+  if (framework === "htmx" && !content.includes(".use(scopedState")) {
+    content = content.replace(
+      /\.use\(absolutejs\)/,
+      ".use(absolutejs)\n\t.use(scopedState({ count: { value: 0 } }))",
+    );
+  }
+
+  // Add the route — find insertion point before .use(networking) or .on('error'
+  const routeCode = meta.pageRouteCode(params);
+  const anchorPatterns = [
+    /\n(\t*)\.use\(networking\)/,
+    /\n(\t*)\.on\(['"]error['"]/,
+  ];
+
+  let inserted = false;
+  for (const pattern of anchorPatterns) {
+    const match = content.match(pattern);
+    if (match && match.index != null) {
+      content =
+        content.slice(0, match.index) +
+        "\n" +
+        routeCode +
+        content.slice(match.index);
+      inserted = true;
+      break;
+    }
+  }
+
+  if (!inserted) {
+    const lastSemicolon = content.lastIndexOf(";");
+    if (lastSemicolon > 0) {
+      content =
+        content.slice(0, lastSemicolon) +
+        "\n" +
+        routeCode +
+        content.slice(lastSemicolon);
+    }
+  }
+
+  await Bun.write(serverPath, content);
+};
+
+/**
+ * Update absolute.config.ts with the new framework directory.
+ */
+const updateAbsoluteConfig = async (
+  framework: StudioFramework,
+  projectDir: string,
+  frameworkDir: string,
+) => {
+  const meta = getFrameworkMeta(framework);
+  const configPath = join(projectDir, "absolute.config.ts");
+  const relativePath = frameworkDir
+    .replace(projectDir + "/", "")
+    .replace(projectDir + "\\", "");
+
+  if (!existsSync(configPath)) return;
+
+  const configContent = await Bun.file(configPath).text();
+
+  // Check if already configured
+  if (configContent.includes(`${meta.configKey}:`)) return;
+
+  // Insert before the closing })
+  const lines = configContent.split("\n");
+  let insertIndex = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!.trim();
+    if (
+      line.includes("Directory:") ||
+      line.includes("publicDirectory:") ||
+      line.includes("buildDirectory:") ||
+      line.includes("assetsDirectory:")
+    ) {
+      // Ensure trailing comma
+      if (!lines[i]!.trimEnd().endsWith(",")) {
+        lines[i] = lines[i]!.replace(/(\S)\s*$/, "$1,");
+      }
+      insertIndex = i + 1;
+      break;
+    }
+  }
+
+  if (insertIndex !== -1) {
+    const prevLine = lines[insertIndex - 1] ?? "";
+    const indent = prevLine.match(/^(\s*)/)?.[1] ?? "\t";
+    lines.splice(
+      insertIndex,
+      0,
+      `${indent}${meta.configKey}: '${relativePath}',`,
+    );
+    await Bun.write(configPath, lines.join("\n"));
+  }
+};
+
+/**
+ * Full framework scaffolding — copies templates, installs deps,
+ * adds routes, and updates config.
+ */
+/**
+ * Derive where a new framework directory should go based on existing config.
+ * Reads the layout from already-configured frameworks so nothing is hardcoded.
+ */
+const deriveFrameworkDirectory = (
+  framework: StudioFramework,
+  projectDir: string,
+  scanConfig?: ProjectConfig,
+): string => {
+  const configured = getConfiguredFrameworks(scanConfig ?? {});
+
+  if (configured.length > 0) {
+    // Use existing directories to determine the convention.
+    // If an existing dir ends with its framework name (e.g., .../react),
+    // the project uses per-framework subfolders → sibling for the new one.
+    // Otherwise the project uses a flat layout — new framework goes as a subfolder.
+    const existing = configured[0]!;
+    const dirBasename = basename(existing.directory);
+
+    if (dirBasename === existing.framework) {
+      // e.g., /project/src/frontend/react → parent is /project/src/frontend
+      return join(dirname(existing.directory), framework);
+    }
+    // Flat layout — existing dir IS the frontend root, new framework goes inside
+    return join(existing.directory, framework);
+  }
+
+  // No existing frameworks — try to find a convention from the config file
+  // Fall back to: <projectDir>/src/frontend/<framework>
+  // but check common locations first
+  const candidates = [
+    join(projectDir, "src", "frontend", framework),
+    join(projectDir, "frontend", framework),
+    join(projectDir, "src", framework),
+  ];
+  for (const candidate of candidates) {
+    const parent = dirname(candidate);
+    if (existsSync(parent)) return candidate;
+  }
+  return candidates[0]!;
+};
+
+/**
+ * Scaffold a framework — copies templates, installs deps, updates config.
+ * Does NOT add any routes (that happens when creating a page).
+ */
+export const addFramework = async (
+  framework: StudioFramework,
+  projectDir: string,
+  templateDir?: string,
+  scanConfig?: ProjectConfig,
+): Promise<{ directory: string }> => {
+  const frameworkDir = deriveFrameworkDirectory(
+    framework,
+    projectDir,
+    scanConfig,
+  );
+
+  // Resolve template directory
+  const resolvedTemplateDir = resolveTemplateDir(templateDir);
+
+  if (resolvedTemplateDir) {
+    // 1. Copy the full framework template (components, styles, etc.)
+    copyFrameworkTemplate(framework, frameworkDir, resolvedTemplateDir);
+
+    // 2. Ensure shared styles exist
+    ensureSharedStyles(frameworkDir, resolvedTemplateDir);
+  }
+
+  // Always ensure the pages directory exists — copyFrameworkTemplate skips
+  // pages/ so Studio can generate them via createPageFile instead.
+  mkdirSync(join(frameworkDir, "pages"), { recursive: true });
+
+  // 3. Install dependencies (always, even without a template dir —
+  //    installFrameworkDeps falls back to "latest" for missing versions)
+  await installFrameworkDeps(framework, projectDir, resolvedTemplateDir);
+
+  // 3b. Vue needs a type shim so TypeScript can resolve .vue imports
+  if (framework === "vue") {
+    const typesDir = join(projectDir, "types");
+    const shimPath = join(typesDir, "vue-shim.d.ts");
+    if (!existsSync(shimPath)) {
+      mkdirSync(typesDir, { recursive: true });
+      await Bun.write(
+        shimPath,
+        `declare module '*.vue' {\n\timport type { Component } from 'vue';\n\n\tconst component: Component<Record<never, never>>;\n\texport default component;\n}\n`,
+      );
+    }
+  }
+
+  // 4. Vue + Svelte coexistence needs vueImporter
+  const hasSvelte = !!scanConfig?.svelteDirectory || framework === "svelte";
+  const hasVue = !!scanConfig?.vueDirectory || framework === "vue";
+  if (hasSvelte && hasVue) {
+    await ensureVueImporter(projectDir, scanConfig);
+  }
+
+  // 5. Svelte needs prettier-plugin-svelte for formatting
+  if (framework === "svelte") {
+    await addSveltePrettierConfig(projectDir);
+  }
+
+  // 6. Update absolute.config.ts (HMR will rebuild manifest for new directory)
+  await updateAbsoluteConfig(framework, projectDir, frameworkDir);
+
+  return { directory: frameworkDir };
+};
+
+// ── Prettier config management ─────────────────────────────────
+
+/**
+ * Add the prettier-plugin-svelte plugin and parser override to .prettierrc.json.
+ */
+const addSveltePrettierConfig = async (projectDir: string) => {
+  const configPath = join(projectDir, ".prettierrc.json");
+  if (!existsSync(configPath)) return;
+
+  const config = JSON.parse(await Bun.file(configPath).text()) as {
+    plugins?: string[];
+    overrides?: { files: string; options: Record<string, string> }[];
+    [key: string]: unknown;
+  };
+
+  let changed = false;
+
+  // Add plugin
+  if (!config.plugins) config.plugins = [];
+  if (!config.plugins.includes("prettier-plugin-svelte")) {
+    config.plugins.push("prettier-plugin-svelte");
+    changed = true;
+  }
+
+  // Add svelte parser override
+  if (!config.overrides) config.overrides = [];
+  const hasSvelteOverride = config.overrides.some(
+    (o) => o.files === "*.svelte",
+  );
+  if (!hasSvelteOverride) {
+    config.overrides.push({ files: "*.svelte", options: { parser: "svelte" } });
+    changed = true;
+  }
+
+  if (changed) {
+    await Bun.write(configPath, JSON.stringify(config, null, "\t") + "\n");
+  }
+};
+
+/**
+ * Remove the prettier-plugin-svelte plugin and parser override from .prettierrc.json.
+ */
+const removeSveltePrettierConfig = async (projectDir: string) => {
+  const configPath = join(projectDir, ".prettierrc.json");
+  if (!existsSync(configPath)) return;
+
+  const config = JSON.parse(await Bun.file(configPath).text()) as {
+    plugins?: string[];
+    overrides?: { files: string; options: Record<string, string> }[];
+    [key: string]: unknown;
+  };
+
+  let changed = false;
+
+  // Remove plugin
+  if (config.plugins) {
+    const idx = config.plugins.indexOf("prettier-plugin-svelte");
+    if (idx !== -1) {
+      config.plugins.splice(idx, 1);
+      changed = true;
+    }
+    if (config.plugins.length === 0) delete config.plugins;
+  }
+
+  // Remove svelte parser override
+  if (config.overrides) {
+    const idx = config.overrides.findIndex((o) => o.files === "*.svelte");
+    if (idx !== -1) {
+      config.overrides.splice(idx, 1);
+      changed = true;
+    }
+    if (config.overrides.length === 0) delete config.overrides;
+  }
+
+  if (changed) {
+    await Bun.write(configPath, JSON.stringify(config, null, "\t") + "\n");
+  }
+};
+
+// ── Source editing / types ────────────────────────────────────
 
 export const readPageSource = async (filePath: string) => {
   return Bun.file(filePath).text();
@@ -128,6 +830,422 @@ export const getTypeDefinitions = async () => {
   return result;
 };
 
+// ── Framework reorganization ──────────────────────────────────
+
+/**
+ * Check whether reorganization is needed when adding a second framework.
+ * Returns the framework that should be moved into its own subfolder,
+ * or null if no reorganization is needed.
+ */
+export const checkNeedsReorganization = (
+  config: ProjectConfig,
+  newFramework: StudioFramework,
+): { framework: StudioFramework; currentDirectory: string } | null => {
+  const configured = getConfiguredFrameworks(config);
+  // Only trigger when going from exactly 1 → 2 frameworks
+  if (configured.length !== 1) return null;
+
+  const existing = configured[0]!;
+  // Don't suggest if adding the same framework
+  if (existing.framework === newFramework) return null;
+
+  // Only suggest reorganization if the existing framework is NOT already in its own subfolder.
+  // If the directory basename matches the framework name (e.g., .../react), it's already isolated.
+  const dirBasename = basename(
+    existing.directory.replace(/\\/g, "/").replace(/\/$/, ""),
+  );
+  if (dirBasename === existing.framework) return null;
+
+  return {
+    framework: existing.framework,
+    currentDirectory: existing.directory,
+  };
+};
+
+/**
+ * Move a framework from the root frontend directory into its own subfolder.
+ * e.g., src/frontend/ → src/frontend/react/
+ * Updates absolute.config.ts and server.ts imports.
+ */
+export const reorganizeFramework = async (
+  framework: StudioFramework,
+  projectDir: string,
+  currentDirectory: string,
+) => {
+  const newDirectory = join(currentDirectory, framework);
+  mkdirSync(newDirectory, { recursive: true });
+
+  // Move framework-specific directories (pages, components, utils)
+  // but NOT shared directories (styles) or other framework dirs
+  const otherFrameworkNames = new Set(
+    ALL_FRAMEWORKS.filter((f) => f !== framework),
+  );
+  const sharedDirs = new Set(["styles", "indexes"]);
+  const skipDirs = new Set([...otherFrameworkNames, ...sharedDirs, framework]);
+
+  const movedEntries: string[] = [];
+  const entries = readdirSync(currentDirectory, { withFileTypes: true });
+  for (const entry of entries) {
+    if (skipDirs.has(entry.name)) continue;
+    const src = join(currentDirectory, entry.name);
+    const dest = join(newDirectory, entry.name);
+    renameSync(src, dest);
+    movedEntries.push(entry.name);
+  }
+
+  // Update absolute.config.ts
+  await updateConfigDirectoryValue(framework, projectDir, newDirectory);
+
+  // Update server.ts imports — only for paths pointing to moved items
+  await updateServerImports(
+    projectDir,
+    currentDirectory,
+    newDirectory,
+    movedEntries,
+  );
+
+  return newDirectory;
+};
+
+/**
+ * Move a framework from its subfolder back to the root frontend directory.
+ * e.g., src/frontend/react/ → src/frontend/
+ * Updates absolute.config.ts and server.ts imports.
+ */
+export const consolidateFramework = async (
+  framework: StudioFramework,
+  projectDir: string,
+  currentDirectory: string,
+) => {
+  const parentDir = dirname(currentDirectory);
+
+  const entries = readdirSync(currentDirectory, { withFileTypes: true });
+  for (const entry of entries) {
+    const src = join(currentDirectory, entry.name);
+    const dest = join(parentDir, entry.name);
+    // Don't overwrite existing shared directories
+    if (existsSync(dest)) continue;
+    renameSync(src, dest);
+  }
+
+  // Remove the now-empty framework subfolder
+  try {
+    rmSync(currentDirectory, { recursive: true });
+  } catch {
+    // may not be fully empty if shared dirs existed
+  }
+
+  // Update absolute.config.ts
+  await updateConfigDirectoryValue(framework, projectDir, parentDir);
+
+  // Update server.ts imports
+  await updateServerImports(projectDir, currentDirectory, parentDir);
+
+  return parentDir;
+};
+
+/**
+ * Update a specific framework directory value in absolute.config.ts.
+ */
+const updateConfigDirectoryValue = async (
+  framework: StudioFramework,
+  projectDir: string,
+  newDirectory: string,
+) => {
+  const meta = getFrameworkMeta(framework);
+  const configPath = join(projectDir, "absolute.config.ts");
+  if (!existsSync(configPath)) return;
+
+  const relativePath = relative(projectDir, newDirectory).replace(/\\/g, "/");
+  let content = await Bun.file(configPath).text();
+
+  // Replace the existing directory value
+  const pattern = new RegExp(`(${meta.configKey}\\s*:\\s*)['"][^'"]+['"]`);
+  content = content.replace(pattern, `$1'${relativePath}'`);
+
+  await Bun.write(configPath, content);
+};
+
+/**
+ * Update import paths in server.ts when a framework directory moves.
+ * Only replaces paths that point to items that were actually moved,
+ * not paths to other framework subdirectories.
+ */
+const updateServerImports = async (
+  projectDir: string,
+  oldDirectory: string,
+  newDirectory: string,
+  movedEntries?: string[],
+) => {
+  const serverPath = findServerFile(projectDir);
+  if (!serverPath) return;
+
+  const oldRelDir = computeRelativeDir(dirname(serverPath), oldDirectory);
+  const newRelDir = computeRelativeDir(dirname(serverPath), newDirectory);
+
+  let content = await Bun.file(serverPath).text();
+
+  if (movedEntries && movedEntries.length > 0) {
+    // Only replace paths that continue with one of the moved entries
+    // e.g., ../frontend/pages/... → ../frontend/react/pages/...
+    // but NOT ../frontend/svelte/... (svelte wasn't moved)
+    for (const entry of movedEntries) {
+      content = content.replaceAll(
+        `${oldRelDir}/${entry}`,
+        `${newRelDir}/${entry}`,
+      );
+    }
+  } else {
+    // Consolidation: replace exact framework dir path
+    // e.g., ../frontend/react/ → ../frontend/
+    content = content.replaceAll(oldRelDir, newRelDir);
+  }
+
+  await Bun.write(serverPath, content);
+};
+
+// ── Page deletion ─────────────────────────────────────────────
+
+/**
+ * Delete a page file and remove its route from server.ts.
+ * Returns whether this was the last page of the framework.
+ */
+export const deletePage = async (
+  pageName: string,
+  route: string,
+  framework: StudioFramework,
+  projectDir: string,
+  frameworkDir: string,
+  stylesDirectory?: string,
+): Promise<{
+  deletedFile: string | null;
+  isLastPage: boolean;
+  frameworkDir: string;
+}> => {
+  const meta = getFrameworkMeta(framework);
+  const pagesDir = join(frameworkDir, "pages");
+  const filePath = join(pagesDir, `${pageName}${meta.extension}`);
+
+  // Remove the route from server.ts first, then check if any other
+  // route still references this component before deleting the file.
+  await removePageRoute(pageName, route, framework, projectDir);
+
+  let deletedFile: string | null = null;
+  if (existsSync(filePath)) {
+    // Only delete the file if no other route still uses this component
+    const serverPath = findServerFile(projectDir);
+    let stillReferenced = false;
+    if (serverPath) {
+      const serverContent = await Bun.file(serverPath).text();
+      // Check if the component name still appears in a handler call
+      stillReferenced = serverContent.includes(pageName);
+    }
+    if (!stillReferenced) {
+      unlinkSync(filePath);
+      deletedFile = filePath;
+
+      // Also remove the page's CSS file from the shared styles directory
+      if (stylesDirectory) {
+        const cssPath = join(stylesDirectory, `${toKebab(pageName)}.css`);
+        if (existsSync(cssPath)) unlinkSync(cssPath);
+      }
+    }
+  }
+
+  // Check if this was the last page
+  let isLastPage = true;
+  if (existsSync(pagesDir)) {
+    const remaining = readdirSync(pagesDir).filter((f) => !f.startsWith("."));
+    isLastPage = remaining.length === 0;
+  }
+
+  return { deletedFile, isLastPage, frameworkDir };
+};
+
+/**
+ * Remove a page route + its imports from server.ts.
+ */
+const removePageRoute = async (
+  pageName: string,
+  route: string,
+  framework: StudioFramework,
+  projectDir: string,
+) => {
+  const serverPath = findServerFile(projectDir);
+  if (!serverPath) return;
+
+  let content = await Bun.file(serverPath).text();
+
+  // Remove the .get() route block for this route by finding balanced parens.
+  // Regex-only approaches break when nesting depth varies across frameworks
+  // (e.g. handleHTMLPageRequest(asset(...)) has 3 closing parens).
+  const getPrefix = `\n\t.get('${route}'`;
+  const getPrefixAlt = `\n\t.get("${route}"`;
+  let getStart = content.indexOf(getPrefix);
+  if (getStart === -1) getStart = content.indexOf(getPrefixAlt);
+
+  if (getStart !== -1) {
+    // Find the opening ( of .get(
+    const parenStart = content.indexOf("(", getStart + 2);
+    if (parenStart !== -1) {
+      // Walk forward counting balanced parens to find the matching close
+      let depth = 0;
+      let i = parenStart;
+      for (; i < content.length; i++) {
+        if (content[i] === "(") depth++;
+        else if (content[i] === ")") {
+          depth--;
+          if (depth === 0) break;
+        }
+      }
+      // Remove from the \n before .get to the closing )
+      content = content.slice(0, getStart) + content.slice(i + 1);
+    }
+  }
+
+  // Remove any imports that are now unused after the route was deleted.
+  // This handles component imports (named or default) and handler imports
+  // regardless of whether the pageName matches the actual import name.
+  const lines = content.split("\n");
+  const importLines: { index: number; names: string[] }[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (!line.trimStart().startsWith("import ")) continue;
+
+    // Extract imported names: named imports { A, B } and default imports
+    const names: string[] = [];
+    const namedMatch = line.match(/import\s+\{([^}]+)\}\s+from/);
+    if (namedMatch) {
+      for (const n of namedMatch[1]!.split(",")) {
+        const trimmed = n.trim();
+        if (trimmed) names.push(trimmed);
+      }
+    }
+    const defaultMatch = line.match(/^import\s+(\w+)\s+from/);
+    if (defaultMatch) {
+      names.push(defaultMatch[1]!);
+    }
+
+    if (names.length > 0) {
+      importLines.push({ index: i, names });
+    }
+  }
+
+  // Build the non-import code to check for references
+  const nonImportCode = lines
+    .filter((line) => !line.trimStart().startsWith("import "))
+    .join("\n");
+
+  // Remove import lines where NONE of the imported names appear in non-import code
+  const linesToRemove = new Set<number>();
+  for (const { index, names } of importLines) {
+    const allUnused = names.every((name) => !nonImportCode.includes(name));
+    if (allUnused) {
+      linesToRemove.add(index);
+    }
+  }
+
+  if (linesToRemove.size > 0) {
+    content = lines.filter((_, i) => !linesToRemove.has(i)).join("\n");
+  }
+
+  // Clean up empty lines left behind
+  content = content.replace(/\n{3,}/g, "\n\n");
+
+  await Bun.write(serverPath, content);
+};
+
+// ── Framework cleanup (last page deleted) ─────────────────────
+
+/**
+ * Clean up a framework after its last page is deleted:
+ * - Remove the framework directory
+ * - Remove the config entry from absolute.config.ts
+ * - Remove framework-specific dependencies from package.json
+ */
+export const cleanupFramework = async (
+  framework: StudioFramework,
+  projectDir: string,
+  frameworkDir: string,
+) => {
+  const meta = getFrameworkMeta(framework);
+
+  // 1. Remove the framework directory
+  if (existsSync(frameworkDir)) {
+    rmSync(frameworkDir, { recursive: true });
+  }
+
+  // 2. Remove the config entry from absolute.config.ts
+  const configPath = join(projectDir, "absolute.config.ts");
+  if (existsSync(configPath)) {
+    let configContent = await Bun.file(configPath).text();
+    // Remove the line with the framework's config key
+    configContent = configContent
+      .split("\n")
+      .filter((line) => !line.includes(`${meta.configKey}:`))
+      .join("\n");
+    // Clean up trailing commas before closing })
+    configContent = configContent.replace(/,(\s*\}\))/, "$1");
+    await Bun.write(configPath, configContent);
+  }
+
+  // 3. Svelte: remove prettier-plugin-svelte config
+  if (framework === "svelte") {
+    await removeSveltePrettierConfig(projectDir);
+  }
+
+  // 4. Remove framework-specific dependencies from package.json
+  const removedDeps: string[] = [];
+  if (meta.dependencies.length > 0 || meta.devDependencies.length > 0) {
+    const pkgPath = join(projectDir, "package.json");
+    if (existsSync(pkgPath)) {
+      const pkg = JSON.parse(await Bun.file(pkgPath).text()) as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+
+      let changed = false;
+      for (const dep of meta.dependencies) {
+        if (pkg.dependencies?.[dep]) {
+          delete pkg.dependencies[dep];
+          removedDeps.push(dep);
+          changed = true;
+        }
+      }
+      for (const dep of meta.devDependencies) {
+        if (pkg.devDependencies?.[dep]) {
+          delete pkg.devDependencies[dep];
+          removedDeps.push(dep);
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        await Bun.write(pkgPath, JSON.stringify(pkg, null, "\t") + "\n");
+        // Run bun install to clean up lockfile
+        const proc = Bun.spawn(["bun", "install"], {
+          cwd: projectDir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await proc.exited;
+      }
+    }
+  }
+
+  return { removedDeps };
+};
+
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const capitalize = (str: string) =>
+  str === "html"
+    ? "HTML"
+    : str === "htmx"
+      ? "HTMX"
+      : str.charAt(0).toUpperCase() + str.slice(1);
+
 export const resolveLocalImports = async (filePath: string, depth = 0) => {
   const result: Record<string, string> = {};
 
@@ -141,7 +1259,6 @@ export const resolveLocalImports = async (filePath: string, depth = 0) => {
       const dir = dirname(filePath);
       let resolved = resolve(dir, importPath);
 
-      // Try common extensions if the path has no extension
       if (!/\.\w+$/.test(resolved)) {
         const extensions = [".ts", ".tsx", ".js", ".jsx"];
         for (const ext of extensions) {

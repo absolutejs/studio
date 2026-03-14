@@ -1,4 +1,5 @@
 import type { Subprocess } from "bun";
+import { join, resolve } from "path";
 
 const DEFAULT_STUDIO_PORT = 3625;
 const DEFAULT_DEV_PORT = 3000;
@@ -230,15 +231,50 @@ const main = async () => {
   // Wait for the dev server to start
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
-  // Start the studio server (reads pre-built assets from build/)
+  // Load absolute.config.ts from the project to get all framework directories
   const devServerUrl = `http://localhost:${devPort}`;
+
+  let projectConfig: Record<string, unknown> = {};
+  try {
+    const configPath = devConfig
+      ? resolve(devConfig)
+      : resolve(projectDir, "absolute.config.ts");
+    const mod = await import(configPath);
+    projectConfig = mod.default ?? mod.config ?? {};
+  } catch {
+    // Config may not exist yet
+  }
+
+  // Start the studio server (reads pre-built assets from build/)
   try {
     const { startStudio } = await import("./server");
     await startStudio({
       port,
       projectDir,
       devServerUrl,
-      reactDirectory: reactDirectory || undefined,
+      reactDirectory:
+        reactDirectory ||
+        (projectConfig.reactDirectory
+          ? join(projectDir, projectConfig.reactDirectory as string)
+          : undefined),
+      svelteDirectory: projectConfig.svelteDirectory
+        ? join(projectDir, projectConfig.svelteDirectory as string)
+        : undefined,
+      vueDirectory: projectConfig.vueDirectory
+        ? join(projectDir, projectConfig.vueDirectory as string)
+        : undefined,
+      htmlDirectory: projectConfig.htmlDirectory
+        ? join(projectDir, projectConfig.htmlDirectory as string)
+        : undefined,
+      htmxDirectory: projectConfig.htmxDirectory
+        ? join(projectDir, projectConfig.htmxDirectory as string)
+        : undefined,
+      angularDirectory: projectConfig.angularDirectory
+        ? join(projectDir, projectConfig.angularDirectory as string)
+        : undefined,
+      stylesDirectory: projectConfig.stylesConfig
+        ? join(projectDir, projectConfig.stylesConfig as string)
+        : undefined,
     });
   } catch (err) {
     console.error(`${RED}[studio] Failed to start:${RESET}`, err);
