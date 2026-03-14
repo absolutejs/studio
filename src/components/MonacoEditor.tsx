@@ -38,10 +38,14 @@ export const MonacoEditor = ({
   const onSaveRef = useRef(onSave);
   const onChangeRef = useRef(onChange);
   const onNavigateRef = useRef(onNavigate);
+  const valueRef = useRef(value);
+  const languageRef = useRef(language);
 
   onSaveRef.current = onSave;
   onChangeRef.current = onChange;
   onNavigateRef.current = onNavigate;
+  valueRef.current = value;
+  languageRef.current = language;
 
   const defineTheme = useCallback((m: any) => {
     m.editor.defineTheme("studio-dark", {
@@ -205,10 +209,14 @@ export const MonacoEditor = ({
         registerLanguage(m);
         configureTypescript(m);
 
+        const monacoLang =
+          languageRef.current === "typescript"
+            ? "typescriptReact"
+            : languageRef.current;
         const modelUri = m.Uri.parse("file:///src/current.tsx");
         const model = m.editor.createModel(
-          value,
-          language === "typescript" ? "typescriptReact" : language,
+          valueRef.current,
+          monacoLang,
           modelUri,
         );
         modelRef.current = model;
@@ -328,6 +336,18 @@ export const MonacoEditor = ({
       isInitializedRef.current = false;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Update model language when prop changes
+  useEffect(() => {
+    if (modelRef.current && monacoRef.current) {
+      const monacoLang =
+        language === "typescript" ? "typescriptReact" : language;
+      const currentLang = modelRef.current.getLanguageId();
+      if (currentLang !== monacoLang) {
+        monacoRef.current.editor.setModelLanguage(modelRef.current, monacoLang);
+      }
+    }
+  }, [language]);
 
   // Update value when prop changes
   useEffect(() => {

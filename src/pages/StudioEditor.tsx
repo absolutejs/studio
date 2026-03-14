@@ -425,9 +425,7 @@ const StudioEditorInner = ({
 
   // --- Sync source content from query ---
   useEffect(() => {
-    if (sourceData?.content != null) {
-      setSourceContent(sourceData.content);
-    }
+    setSourceContent(sourceData?.content ?? "");
   }, [sourceData]);
 
   // Auto-select first page
@@ -773,6 +771,15 @@ const StudioEditorInner = ({
         deps={deps}
         types={types}
         value={sourceContent}
+        language={
+          currentPage?.framework === "html" || currentPage?.framework === "htmx"
+            ? "html"
+            : currentPage?.framework === "svelte"
+              ? "html"
+              : currentPage?.framework === "vue"
+                ? "html"
+                : "typescript"
+        }
         onChange={setSourceContent}
         onNavigate={handleNavigate}
         onSave={handleSaveSource}

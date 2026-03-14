@@ -51,15 +51,17 @@ const extractPageName = (source: string, matchEnd: number): string | null => {
   // Get the text after the handler name — the opening paren and first argument
   const rest = source.slice(matchEnd);
 
+  // HTML/HTMX asset: handleXPageRequest(asset(manifest, 'PageName'))
+  // Anchored to start — asset() must be the first argument, not a later one
+  // (React uses asset() as 2nd/3rd arg: handleReactPageRequest(Comp, asset(...)))
+  const assetMatch = rest.match(/^\(\s*asset\(\s*\w+\s*,\s*['"](\w+)['"]\)/);
+  if (assetMatch) return assetMatch[1]!;
+
   // React/Svelte/Vue direct component: handleXPageRequest(\n\t\tComponentName,
   const componentMatch = rest.match(
     /\(\s*\n?\s*(?:vueImports\.)?(\w+)\s*[,\n]/,
   );
   if (componentMatch) return componentMatch[1]!;
-
-  // HTML/HTMX asset: handleXPageRequest(asset(manifest, 'PageName'))
-  const assetMatch = rest.match(/\(\s*asset\(\s*\w+\s*,\s*['"](\w+)['"]\)/);
-  if (assetMatch) return assetMatch[1]!;
 
   // Angular dynamic import: () => import('.../pages/page-name')
   const importMatch = rest.match(
@@ -162,14 +164,29 @@ export const scanProjectPages = async (
 
     // Find the source file by name in the configured directory
     let file: string | undefined;
+    const meta = getFrameworkMeta(framework);
     if (config) {
-      const meta = getFrameworkMeta(framework);
       const configKey = `${framework}Directory` as keyof ProjectConfig;
       const dir = config[configKey];
       if (dir) {
         const candidate = join(dir, "pages", `${name}${meta.extension}`);
         if (existsSync(candidate)) {
           file = candidate;
+        }
+      }
+    }
+
+    // Fallback: try common directory patterns if config dir wasn't set or file wasn't found
+    if (!file) {
+      const fallbackDirs = [
+        join(projectDir, "src", "frontend", framework, "pages"),
+        join(projectDir, "src", framework, "pages"),
+      ];
+      for (const dir of fallbackDirs) {
+        const candidate = join(dir, `${name}${meta.extension}`);
+        if (existsSync(candidate)) {
+          file = candidate;
+          break;
         }
       }
     }
@@ -440,6 +457,214 @@ const ensureVueImporter = async (
   await Bun.write(importerPath, content);
 };
 
+/** Find the vueImporter.ts file path (relative to the server file). */
+const findVueImporterPath = (projectDir: string): string | null => {
+  const serverPath = findServerFile(projectDir);
+  const serverDir = serverPath
+    ? dirname(serverPath)
+    : join(projectDir, "src", "backend");
+  const importerPath = join(serverDir, "utils", "vueImporter.ts");
+  return existsSync(importerPath) ? importerPath : null;
+};
+
+/**
+ * Remove a page from vueImporter.ts. If no pages remain, delete the file.
+ */
+const removeFromVueImporter = async (
+  pageName: string,
+  projectDir: string,
+): Promise<void> => {
+  const importerPath = findVueImporterPath(projectDir);
+  if (!importerPath) return;
+
+  let content = await Bun.file(importerPath).text();
+
+  // Remove the import line for this page
+  const lines = content.split("\n");
+  const filtered = lines.filter(
+    (line) => !(line.startsWith("import ") && line.includes(` ${pageName} `)),
+  );
+  content = filtered.join("\n");
+
+  // Update the exports object — remove this page name
+  content = content.replace(
+    /export const vueImports = \{([^}]+)\} as const;/,
+    (match, inner: string) => {
+      const names = inner
+        .split(",")
+        .map((n) => n.trim())
+        .filter((n) => n && n !== pageName);
+      if (names.length === 0) return match; // will be deleted below
+      return `export const vueImports = { ${names.join(", ")} } as const;`;
+    },
+  );
+
+  // Check if any imports remain
+  const hasImports = content.split("\n").some((l) => l.startsWith("import "));
+  if (!hasImports) {
+    // No more pages — delete the importer
+    unlinkSync(importerPath);
+    return;
+  }
+
+  await Bun.write(importerPath, content);
+};
+
+/**
+ * Delete vueImporter.ts entirely.
+ */
+const deleteVueImporter = (projectDir: string): void => {
+  const importerPath = findVueImporterPath(projectDir);
+  if (importerPath) unlinkSync(importerPath);
+};
+
+/**
+ * When svelte is removed and vue still exists, convert vue routes in server.ts
+ * from vueImporter indirection (`vueImports.X`) to direct imports, then delete
+ * vueImporter.ts.
+ */
+const convertVueRoutesToDirectImports = async (
+  projectDir: string,
+  scanConfig?: ProjectConfig,
+): Promise<void> => {
+  const serverPath = findServerFile(projectDir);
+  if (!serverPath) return;
+
+  let content = await Bun.file(serverPath).text();
+
+  // Check if server.ts actually uses vueImports
+  if (!content.includes("vueImports.")) {
+    deleteVueImporter(projectDir);
+    return;
+  }
+
+  // Find all vueImports.X references and collect the component names
+  const vueImportRefs = [...content.matchAll(/vueImports\.(\w+)/g)];
+  const componentNames = [...new Set(vueImportRefs.map((m) => m[1]!))];
+
+  // Determine the vue directory for import paths
+  const vueDir =
+    scanConfig?.vueDirectory ??
+    deriveFrameworkDirectory("vue", projectDir, scanConfig);
+  const relDir = computeRelativeDir(dirname(serverPath), vueDir);
+
+  // Replace vueImports.X with just X in route code
+  for (const name of componentNames) {
+    content = content.replaceAll(`vueImports.${name}`, name);
+  }
+
+  // Remove the vueImporter import line
+  content = content
+    .split("\n")
+    .filter((line) => !line.includes("vueImporter"))
+    .join("\n");
+
+  // Add direct imports for each component
+  const lines = content.split("\n");
+  let lastImportIndex = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]!.startsWith("import ")) lastImportIndex = i;
+  }
+
+  if (lastImportIndex >= 0) {
+    const newImports = componentNames
+      .filter((name) => {
+        // Only add if not already directly imported
+        return !content.includes(`import ${name} from`);
+      })
+      .map((name) => `import ${name} from '${relDir}/pages/${name}.vue';`);
+    if (newImports.length > 0) {
+      lines.splice(lastImportIndex + 1, 0, ...newImports);
+    }
+  }
+
+  content = lines.join("\n");
+  content = content.replace(/\n{3,}/g, "\n\n");
+  await Bun.write(serverPath, content);
+
+  // Delete vueImporter.ts
+  deleteVueImporter(projectDir);
+};
+
+/**
+ * When svelte is added to a project that already has vue with direct imports,
+ * convert vue routes in server.ts from direct imports to vueImporter indirection.
+ * This avoids TypeScript SFC type conflicts between .vue and .svelte files.
+ */
+const convertVueRoutesToVueImporter = async (
+  projectDir: string,
+  scanConfig?: ProjectConfig,
+): Promise<void> => {
+  const serverPath = findServerFile(projectDir);
+  if (!serverPath) return;
+
+  let content = await Bun.file(serverPath).text();
+
+  // Already using vueImporter — nothing to do
+  if (content.includes("vueImports.")) return;
+
+  // Find direct vue component imports: `import X from '.../<something>.vue'`
+  const vueImportRe =
+    /^import\s+(\w+)\s+from\s+['"][^'"]*\/pages\/\w+\.vue['"];?\s*$/gm;
+  const directImports = [...content.matchAll(vueImportRe)];
+  if (directImports.length === 0) return;
+
+  const componentNames = directImports.map((m) => m[1]!);
+
+  // Replace direct component references in route code with vueImports.X
+  for (const name of componentNames) {
+    // Only replace in handler calls, not in import lines.
+    // Match the component name when it appears as a standalone identifier
+    // in a handler context (after a newline+tabs, as the first arg).
+    content = content.replace(
+      new RegExp(`(handleVuePageRequest\\(\\s*\\n\\s*)${name}\\b`, "g"),
+      `$1vueImports.${name}`,
+    );
+    // Also handle single-line patterns like handleVuePageRequest(Name,
+    content = content.replace(
+      new RegExp(`(handleVuePageRequest\\(\\s*)${name}\\b`, "g"),
+      `$1vueImports.${name}`,
+    );
+  }
+
+  // Remove the direct .vue import lines
+  const lines = content.split("\n");
+  const filtered = lines.filter(
+    (line) => !vueImportRe.test(line.trimStart() + "\n"),
+  );
+
+  // Re-test with fresh regex since lastIndex is stateful
+  content = lines
+    .filter((line) => {
+      const trimmed = line.trimStart();
+      if (!trimmed.startsWith("import ")) return true;
+      return !trimmed.match(
+        /^import\s+\w+\s+from\s+['"][^'"]*\/pages\/\w+\.vue['"];?\s*$/,
+      );
+    })
+    .join("\n");
+
+  // Add vueImporter import if not already present
+  if (!content.includes("vueImporter")) {
+    const importLines = content.split("\n");
+    let lastImportIdx = -1;
+    for (let i = 0; i < importLines.length; i++) {
+      if (importLines[i]!.startsWith("import ")) lastImportIdx = i;
+    }
+    if (lastImportIdx >= 0) {
+      importLines.splice(
+        lastImportIdx + 1,
+        0,
+        `import { vueImports } from './utils/vueImporter';`,
+      );
+      content = importLines.join("\n");
+    }
+  }
+
+  content = content.replace(/\n{3,}/g, "\n\n");
+  await Bun.write(serverPath, content);
+};
+
 /**
  * Compute a relative path from one directory to another.
  */
@@ -561,7 +786,7 @@ export const addPageRoute = async (
 /**
  * Update absolute.config.ts with the new framework directory.
  */
-const updateAbsoluteConfig = async (
+export const updateAbsoluteConfig = async (
   framework: StudioFramework,
   projectDir: string,
   frameworkDir: string,
@@ -666,6 +891,7 @@ export const addFramework = async (
   projectDir: string,
   templateDir?: string,
   scanConfig?: ProjectConfig,
+  options?: { skipConfigUpdate?: boolean },
 ): Promise<{ directory: string }> => {
   const frameworkDir = deriveFrameworkDirectory(
     framework,
@@ -710,6 +936,10 @@ export const addFramework = async (
   const hasVue = !!scanConfig?.vueDirectory || framework === "vue";
   if (hasSvelte && hasVue) {
     await ensureVueImporter(projectDir, scanConfig);
+    // If adding svelte to existing vue, convert direct vue imports to vueImporter
+    if (framework === "svelte" && scanConfig?.vueDirectory) {
+      await convertVueRoutesToVueImporter(projectDir, scanConfig);
+    }
   }
 
   // 5. Svelte needs prettier-plugin-svelte for formatting
@@ -718,7 +948,12 @@ export const addFramework = async (
   }
 
   // 6. Update absolute.config.ts (HMR will rebuild manifest for new directory)
-  await updateAbsoluteConfig(framework, projectDir, frameworkDir);
+  //    When called from page-creation, the caller can skip this to batch the
+  //    config change with the route addition — avoiding an intermediate rebuild
+  //    that would disrupt the currently-loaded page in the preview.
+  if (!options?.skipConfigUpdate) {
+    await updateAbsoluteConfig(framework, projectDir, frameworkDir);
+  }
 
   return { directory: frameworkDir };
 };
@@ -1049,6 +1284,19 @@ export const deletePage = async (
         const cssPath = join(stylesDirectory, `${toKebab(pageName)}.css`);
         if (existsSync(cssPath)) unlinkSync(cssPath);
       }
+
+      // Remove build artifacts for HTML/HTMX pages (they're copied as-is,
+      // not hashed, so the build system's stale output cleanup won't catch them)
+      if (framework === "html" || framework === "htmx") {
+        const buildPath = join(
+          projectDir,
+          "build",
+          framework,
+          "pages",
+          `${pageName}${meta.extension}`,
+        );
+        if (existsSync(buildPath)) unlinkSync(buildPath);
+      }
     }
   }
 
@@ -1064,6 +1312,7 @@ export const deletePage = async (
 
 /**
  * Remove a page route + its imports from server.ts.
+ * For vue pages using vueImporter, also update/remove vueImporter.ts.
  */
 const removePageRoute = async (
   pageName: string,
@@ -1071,6 +1320,12 @@ const removePageRoute = async (
   framework: StudioFramework,
   projectDir: string,
 ) => {
+  // Update vueImporter before modifying server.ts so the dev server
+  // doesn't try to rebuild with stale imports pointing to deleted files.
+  if (framework === "vue") {
+    await removeFromVueImporter(pageName, projectDir);
+  }
+
   const serverPath = findServerFile(projectDir);
   if (!serverPath) return;
 
@@ -1190,8 +1445,26 @@ export const cleanupFramework = async (
     await Bun.write(configPath, configContent);
   }
 
-  // 3. Svelte: remove prettier-plugin-svelte config
-  if (framework === "svelte") {
+  // 3. Clean up vueImporter
+  if (framework === "vue") {
+    // Vue is gone — delete vueImporter entirely
+    deleteVueImporter(projectDir);
+  } else if (framework === "svelte") {
+    // Svelte is gone — vueImporter is no longer needed for type isolation.
+    // If vue still has routes using vueImporter, convert to direct imports.
+    const configPath = join(projectDir, "absolute.config.ts");
+    let vueStillConfigured = false;
+    if (existsSync(configPath)) {
+      const configContent = await Bun.file(configPath).text();
+      vueStillConfigured = configContent.includes("vueDirectory:");
+    }
+    if (vueStillConfigured) {
+      await convertVueRoutesToDirectImports(projectDir);
+    } else {
+      deleteVueImporter(projectDir);
+    }
+
+    // Remove prettier-plugin-svelte config
     await removeSveltePrettierConfig(projectDir);
   }
 

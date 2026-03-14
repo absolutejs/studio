@@ -241,8 +241,10 @@ const main = async () => {
       : resolve(projectDir, "absolute.config.ts");
     const mod = await import(configPath);
     projectConfig = mod.default ?? mod.config ?? {};
-  } catch {
-    // Config may not exist yet
+  } catch (err) {
+    console.warn(
+      `${YELLOW}⚠${RESET} Could not load absolute.config.ts: ${(err as Error).message}`,
+    );
   }
 
   // Start the studio server (reads pre-built assets from build/)

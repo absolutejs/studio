@@ -7,6 +7,7 @@ import {
   createPageFile,
   addPageRoute,
   addFramework,
+  updateAbsoluteConfig,
   getConfiguredFrameworks,
   checkNeedsReorganization,
   reorganizeFramework,
@@ -35,6 +36,8 @@ type StudioConfig = {
   htmxDirectory?: string;
   angularDirectory?: string;
   stylesDirectory?: string;
+  /** Called after bun install to restart the dev server with a clean module cache. */
+  restartDevServer?: () => Promise<void>;
 };
 
 const categorizeScript = (name: string): StudioScriptInfo["category"] => {
@@ -251,29 +254,43 @@ export const startStudio = async (config: StudioConfig = {}) => {
       // rm server/) would race with the new build.
       await waitForDevServer(devServerUrl, "", "rebuild-done", 3000);
 
-      // Snapshot rebuild count before making changes so we can wait for
-      // a NEW rebuild, not be fooled by stale manifest keys.
-      const rebuildBefore = await getDevServerRebuildCount(devServerUrl);
-
       // Check if adding this framework needs reorganization (1 → 2 frameworks)
       const reorgInfo = checkNeedsReorganization(scanConfig, framework);
 
       // Scaffold framework if not yet configured
       let configured = getConfiguredFrameworks(scanConfig);
       let entry = configured.find((c) => c.framework === framework);
+      let isNewFramework = false;
 
       if (!entry) {
+        // Skip the config update inside addFramework — bun install and the
+        // config change would each trigger a dev-server rebuild, and the
+        // intermediate rebuild disrupts the page currently in the preview
+        // (React throws before the new page loads). Instead we batch the
+        // config update with the route addition below so there is only ONE
+        // rebuild after all files are in place.
         const result = await addFramework(
           framework,
           projectDir,
           config.templateDir,
           scanConfig,
+          { skipConfigUpdate: true },
         );
         const configKey = `${framework}Directory` as keyof typeof scanConfig;
         (scanConfig as Record<string, string | undefined>)[configKey] =
           result.directory;
         entry = { framework, directory: result.directory };
+        isNewFramework = true;
+
+        // bun install may have triggered a rebuild (e.g. shared-styles
+        // files landing in a watched directory). Let it settle before we
+        // write more files.
+        await waitForDevServer(devServerUrl, "", "rebuild-done", 4000);
       }
+
+      // Snapshot rebuild count before making changes so we can wait for
+      // a NEW rebuild, not be fooled by stale manifest keys.
+      const rebuildBefore = await getDevServerRebuildCount(devServerUrl);
 
       // Determine vueImporter context
       const hasSvelte = !!scanConfig.svelteDirectory;
@@ -288,6 +305,12 @@ export const startStudio = async (config: StudioConfig = {}) => {
         framework,
         config.stylesDirectory,
       );
+
+      // Update the config and add the route close together so the
+      // dev server batches them into a single rebuild.
+      if (isNewFramework) {
+        await updateAbsoluteConfig(framework, projectDir, entry.directory);
+      }
 
       // Add the route to server.ts — triggers a --hot rebuild
       await addPageRoute(
@@ -523,8 +546,14 @@ export const startStudio = async (config: StudioConfig = {}) => {
     // Source editing
     .get("/api/source", async ({ query }) => {
       const file = query.file as string;
-      const content = await readPageSource(file);
-      return { content };
+      if (!file) return { content: null };
+      try {
+        const content = await readPageSource(file);
+        return { content };
+      } catch (err) {
+        console.error(`[Studio] Failed to read source: ${file}`, err);
+        return { content: null };
+      }
     })
 
     .put("/api/source", async ({ body }) => {
