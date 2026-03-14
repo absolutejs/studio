@@ -288,21 +288,14 @@ header details nav a {
 \t\t)
 \t)`,
     pageTemplate: (name) => `<script lang="ts">
-\tlet { initialCount = 0, cssPath = '' }: { initialCount?: number; cssPath?: string } = $props()
-\tlet count = $state(initialCount)
-\tlet dropdown: HTMLDetailsElement
+\ttype ${name}Props = {
+\t\tinitialCount: number;
+\t\tcssPath?: string;
+\t};
+\timport Counter from '../components/Counter.svelte';
 
-\tconst openDropdown = (event: PointerEvent) => {
-\t\tif (event.pointerType === 'mouse') {
-\t\t\tdropdown.open = true
-\t\t}
-\t}
-
-\tconst closeDropdown = (event: PointerEvent) => {
-\t\tif (event.pointerType === 'mouse') {
-\t\t\tdropdown.open = false
-\t\t}
-\t}
+\tlet { initialCount, cssPath }: ${name}Props = $props();
+\tlet isOpen = $state(false);
 </script>
 
 <svelte:head>
@@ -314,19 +307,25 @@ header details nav a {
 \t<link rel="preconnect" href="https://fonts.googleapis.com" />
 \t<link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
 \t<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@100..900&display=swap" rel="stylesheet" />
-\t<link rel="stylesheet" href={cssPath} type="text/css" />
+\t{#if cssPath}
+\t\t<link rel="stylesheet" href={cssPath} type="text/css" />
+\t{/if}
 </svelte:head>
 
 <header>
 \t<a href="/">AbsoluteJS</a>
-\t<details bind:this={dropdown} onpointerenter={openDropdown} onpointerleave={closeDropdown}>
+\t<details
+\t\topen={isOpen}
+\t\tonpointerenter={() => (isOpen = true)}
+\t\tonpointerleave={() => (isOpen = false)}
+\t>
 \t\t<summary>Pages</summary>
 \t\t<nav>
-\t\t\t<a href="/react">React</a>
 \t\t\t<a href="/html">HTML</a>
+\t\t\t<a href="/react">React</a>
+\t\t\t<a href="/htmx">HTMX</a>
 \t\t\t<a href="/svelte">Svelte</a>
 \t\t\t<a href="/vue">Vue</a>
-\t\t\t<a href="/htmx">HTMX</a>
 \t\t\t<a href="/angular">Angular</a>
 \t\t</nav>
 \t</details>
@@ -342,10 +341,15 @@ header details nav a {
 \t\t</a>
 \t</nav>
 \t<h1>AbsoluteJS + Svelte</h1>
-\t<button onclick={() => count++}>count is {count}</button>
+\t<Counter {initialCount} />
 \t<p>Edit <code>src/frontend/svelte/pages/${name}.svelte</code> and save to test HMR.</p>
-\t<p style="margin-top: 2rem;">Explore the other pages to see multiple frameworks running together.</p>
-\t<p style="color: #777; font-size: 1rem; margin-top: 2rem;">Click on the AbsoluteJS and Svelte logos to learn more.</p>
+\t<p style="margin-top: 2rem;">
+\t\tExplore the other pages to see how AbsoluteJS seamlessly unifies
+\t\tmultiple frameworks on a single server.
+\t</p>
+\t<p style="color: #777; font-size: 1rem; margin-top: 2rem;">
+\t\tClick on the AbsoluteJS and Svelte logos to learn more.
+\t</p>
 </main>
 
 <style>
@@ -443,40 +447,38 @@ header details nav a {
 \t\t\tgenerateHeadElement({
 \t\t\t\tcssPath: asset(manifest, '${name}CSS'),
 \t\t\t\ttitle: '${name}'
-\t\t\t})
+\t\t\t}),
+\t\t\t{ initialCount: 0 }
 \t\t)
 \t)`;
     },
     pageTemplate: (name) => `<script setup lang="ts">
-import { ref } from 'vue'
+import { ref } from 'vue';
+import CountButton from '../components/CountButton.vue';
 
-const count = ref(0)
-const dropdown = ref<HTMLDetailsElement>()
+const props = defineProps<{
+\tinitialCount: number;
+}>();
 
-const openDropdown = (event: PointerEvent) => {
-\tif (event.pointerType === 'mouse' && dropdown.value) {
-\t\tdropdown.value.open = true
-\t}
-}
-
-const closeDropdown = (event: PointerEvent) => {
-\tif (event.pointerType === 'mouse' && dropdown.value) {
-\t\tdropdown.value.open = false
-\t}
-}
+const count = ref(props.initialCount);
+const isOpen = ref(false);
 </script>
 
 <template>
 \t<header>
 \t\t<a href="/">AbsoluteJS</a>
-\t\t<details ref="dropdown" @pointerenter="openDropdown" @pointerleave="closeDropdown">
+\t\t<details
+\t\t\t:open="isOpen"
+\t\t\t@pointerenter="isOpen = true"
+\t\t\t@pointerleave="isOpen = false"
+\t\t>
 \t\t\t<summary>Pages</summary>
 \t\t\t<nav>
-\t\t\t\t<a href="/react">React</a>
 \t\t\t\t<a href="/html">HTML</a>
+\t\t\t\t<a href="/react">React</a>
+\t\t\t\t<a href="/htmx">HTMX</a>
 \t\t\t\t<a href="/svelte">Svelte</a>
 \t\t\t\t<a href="/vue">Vue</a>
-\t\t\t\t<a href="/htmx">HTMX</a>
 \t\t\t\t<a href="/angular">Angular</a>
 \t\t\t</nav>
 \t\t</details>
@@ -492,10 +494,18 @@ const closeDropdown = (event: PointerEvent) => {
 \t\t\t</a>
 \t\t</nav>
 \t\t<h1>AbsoluteJS + Vue</h1>
-\t\t<button @click="count++">count is {{ count }}</button>
-\t\t<p>Edit <code>src/frontend/vue/pages/${name}.vue</code> and save to test HMR.</p>
-\t\t<p style="margin-top: 2rem">Explore the other pages to see multiple frameworks running together.</p>
-\t\t<p style="color: #777; font-size: 1rem; margin-top: 2rem">Click on the AbsoluteJS and Vue logos to learn more.</p>
+\t\t<CountButton :initialCount="count" />
+\t\t<p>
+\t\t\tEdit <code>example/vue/pages/${name}.vue</code> and save to test
+\t\t\tHMR.
+\t\t</p>
+\t\t<p style="margin-top: 2rem">
+\t\t\tExplore the other pages to see how AbsoluteJS seamlessly unifies
+\t\t\tmultiple frameworks on a single server.
+\t\t</p>
+\t\t<p style="color: #777; font-size: 1rem; margin-top: 2rem">
+\t\t\tClick on the AbsoluteJS and Vue logos to learn more.
+\t\t</p>
 \t</main>
 </template>
 `,

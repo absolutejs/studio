@@ -5,5 +5,7 @@ export default defineConfig({
 	buildDirectory: 'build',
 	reactDirectory: 'src/frontend/react',
 	htmlDirectory: 'src/frontend/html',
+	svelteDirectory: 'src/frontend/svelte',
+	vueDirectory: 'src/frontend/vue',
 	stylesConfig: 'src/frontend/styles'
 });

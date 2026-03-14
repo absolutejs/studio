@@ -5,7 +5,9 @@
 		"@elysiajs/static": "1.4.7",
 		"elysia": "1.4.25",
 		"react": "19.2.4",
-		"react-dom": "19.2.4"
+		"react-dom": "19.2.4",
+		"svelte": "5.53.0",
+		"vue": "3.5.28"
 	},
 	"devDependencies": {
 		"typescript": "5.9.3",
@@ -26,7 +28,8 @@
 		"eslint-plugin-react": "7.37.5",
 		"eslint-plugin-react-compiler": "19.1.0-rc.2",
 		"eslint-plugin-react-hooks": "7.1.0-canary-e8c63626-20260213",
-		"zod-validation-error": "4.0.2"
+		"zod-validation-error": "4.0.2",
+		"prettier-plugin-svelte": "3.5.0"
 	},
 	"name": "example",
 	"scripts": {

@@ -49,6 +49,13 @@ type ScriptInfo = {
 
 type LayoutMode = "preview" | "source" | "split";
 
+type EditorTab = {
+  path: string;
+  label: string;
+  content: string;
+  framework?: string;
+};
+
 const ELEMENT_CATEGORIES: Record<string, string[]> = {
   Layout: [
     "div",
@@ -220,6 +227,8 @@ const StudioEditorInner = ({
   const [currentPage, setCurrentPage] = useState<PageInfo | null>(null);
   const [layout, setLayout] = useState<LayoutMode>("preview");
   const [sourceContent, setSourceContent] = useState("");
+  const [tabs, setTabs] = useState<EditorTab[]>([]);
+  const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
   const [selectedElement, setSelectedElement] =
     useState<SelectedElement | null>(null);
   const [showScripts, setShowScripts] = useState(false);
@@ -423,10 +432,27 @@ const StudioEditorInner = ({
     },
   });
 
-  // --- Sync source content from query ---
+  // --- Sync source content from query & manage tabs ---
   useEffect(() => {
-    setSourceContent(sourceData?.content ?? "");
-  }, [sourceData]);
+    const content = sourceData?.content ?? "";
+    setSourceContent(content);
+
+    if (currentPage?.file && content) {
+      const path = currentPage.file;
+      const label = path.split("/").pop() ?? path;
+      setTabs((prev) => {
+        const existing = prev.find((t) => t.path === path);
+        if (existing) {
+          return prev.map((t) => (t.path === path ? { ...t, content } : t));
+        }
+        return [
+          ...prev,
+          { path, label, content, framework: currentPage.framework },
+        ];
+      });
+      setActiveTabPath(path);
+    }
+  }, [sourceData, currentPage]);
 
   // Auto-select first page
   useEffect(() => {
@@ -591,11 +617,15 @@ const StudioEditorInner = ({
 
   const handleSaveSource = useCallback(
     async (content: string) => {
-      if (!currentPage?.file) return;
-      await saveSource.mutateAsync({ file: currentPage.file, content });
+      const savePath = activeTabPath ?? currentPage?.file;
+      if (!savePath) return;
+      await saveSource.mutateAsync({ file: savePath, content });
       setSourceContent(content);
+      setTabs((prev) =>
+        prev.map((t) => (t.path === savePath ? { ...t, content } : t)),
+      );
     },
-    [currentPage, saveSource],
+    [activeTabPath, currentPage, saveSource],
   );
 
   const handleRunScript = useCallback(
@@ -656,14 +686,73 @@ const StudioEditorInner = ({
   const handleNavigate = useCallback(
     async (path: string) => {
       if (!currentPage?.file) return;
-      const currentDir = currentPage.file.replace(/\/[^/]+$/, "");
-      const fullPath = `${currentDir}/${path}`;
+      let fullPath: string;
+      if (path.startsWith("./") || path.startsWith("../")) {
+        const currentDir = currentPage.file.replace(/\/[^/]+$/, "");
+        fullPath = `${currentDir}/${path}`;
+      } else {
+        fullPath = path;
+      }
+
+      // If already open in a tab, switch to it
+      const existingTab = tabs.find((t) => t.path === fullPath);
+      if (existingTab) {
+        setActiveTabPath(fullPath);
+        setSourceContent(existingTab.content);
+        return;
+      }
+
+      // Fetch and open new tab
       const { data } = await client.api.source.get({
         query: { file: fullPath },
       });
-      if (data) setSourceContent((data as { content: string }).content);
+      if (!data) return;
+
+      const content = (data as { content: string }).content;
+      const label = fullPath.split("/").pop() ?? fullPath;
+      const ext = fullPath.split(".").pop();
+      const fw =
+        ext === "svelte"
+          ? "svelte"
+          : ext === "vue"
+            ? "vue"
+            : currentPage.framework;
+
+      setTabs((prev) => [
+        ...prev,
+        { path: fullPath, label, content, framework: fw },
+      ]);
+      setActiveTabPath(fullPath);
+      setSourceContent(content);
     },
-    [currentPage],
+    [currentPage, tabs],
+  );
+
+  const handleCloseTab = useCallback(
+    (tabPath: string) => {
+      setTabs((prev) => {
+        const filtered = prev.filter((t) => t.path !== tabPath);
+        if (activeTabPath === tabPath) {
+          const idx = prev.findIndex((t) => t.path === tabPath);
+          const next = filtered[Math.min(idx, filtered.length - 1)];
+          setActiveTabPath(next?.path ?? null);
+          setSourceContent(next?.content ?? "");
+        }
+        return filtered;
+      });
+    },
+    [activeTabPath],
+  );
+
+  const handleTabSelect = useCallback(
+    (tabPath: string) => {
+      const tab = tabs.find((t) => t.path === tabPath);
+      if (tab) {
+        setActiveTabPath(tabPath);
+        setSourceContent(tab.content);
+      }
+    },
+    [tabs],
   );
 
   const handleIframeLoad = useCallback(() => {
@@ -765,22 +854,51 @@ const StudioEditorInner = ({
     />
   );
 
+  const activeTab = tabs.find((t) => t.path === activeTabPath);
+
   const renderSource = () => (
     <div className="studio-source-editor">
+      {tabs.length > 0 && (
+        <div className="studio-tab-bar">
+          {tabs.map((tab) => (
+            <div
+              key={tab.path}
+              className={`studio-tab ${tab.path === activeTabPath ? "studio-tab-active" : ""}`}
+              onClick={() => handleTabSelect(tab.path)}
+              title={tab.path}
+            >
+              <span className="studio-tab-label">{tab.label}</span>
+              {tabs.length > 1 && (
+                <button
+                  className="studio-tab-close"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleCloseTab(tab.path);
+                  }}
+                >
+                  &times;
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       <MonacoEditor
         deps={deps}
         types={types}
-        value={sourceContent}
-        language={
-          currentPage?.framework === "html" || currentPage?.framework === "htmx"
-            ? "html"
-            : currentPage?.framework === "svelte"
-              ? "html"
-              : currentPage?.framework === "vue"
-                ? "html"
-                : "typescript"
-        }
-        onChange={setSourceContent}
+        value={activeTab?.content ?? sourceContent}
+        framework={activeTab?.framework ?? currentPage?.framework}
+        filePath={activeTab?.path ?? currentPage?.file}
+        onChange={(val) => {
+          setSourceContent(val);
+          if (activeTabPath) {
+            setTabs((prev) =>
+              prev.map((t) =>
+                t.path === activeTabPath ? { ...t, content: val } : t,
+              ),
+            );
+          }
+        }}
         onNavigate={handleNavigate}
         onSave={handleSaveSource}
       />

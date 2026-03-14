@@ -1,6 +1,29 @@
 export const jsxMonarchLanguage = {
-  defaultToken: "invalid",
+  defaultToken: "",
   tokenPostfix: ".tsx",
+
+  importKeywords: ["import", "export", "from", "as", "default"],
+
+  controlKeywords: [
+    "if",
+    "else",
+    "for",
+    "while",
+    "do",
+    "switch",
+    "case",
+    "break",
+    "continue",
+    "return",
+    "throw",
+    "try",
+    "catch",
+    "finally",
+    "yield",
+    "await",
+    "of",
+    "in",
+  ],
 
   keywords: [
     "break",
@@ -14,15 +37,12 @@ export const jsxMonarchLanguage = {
     "delete",
     "do",
     "else",
-    "export",
     "extends",
     "false",
     "finally",
     "for",
-    "from",
     "function",
     "if",
-    "import",
     "in",
     "instanceof",
     "let",
@@ -66,11 +86,13 @@ export const jsxMonarchLanguage = {
     "infer",
     "unique",
     "is",
-    "never",
-    "unknown",
-    "any",
     "asserts",
     "satisfies",
+    "interface",
+    "constructor",
+    "override",
+    "out",
+    "global",
   ],
 
   typeKeywords: [
@@ -123,7 +145,6 @@ export const jsxMonarchLanguage = {
     "++",
     "--",
     "<<",
-    "</",
     ">>",
     ">>>",
     "&",
@@ -149,7 +170,6 @@ export const jsxMonarchLanguage = {
     "&=",
     "|=",
     "^=",
-    "@",
     "...",
   ],
 
@@ -165,35 +185,59 @@ export const jsxMonarchLanguage = {
     /\\(?:[bBdDfnrstvwWn0\\\/]|@regexpctl|c[A-Z]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/,
 
   tokenizer: {
-    root: [
-      // JSX self-closing tag: <Component />
+    root: [[/[{}]/, "delimiter.bracket"], { include: "common" }],
+
+    common: [
+      // Decorators
+      [/@@[a-zA-Z_$][\w$]*/, "annotation"],
+
+      // Function declaration: function name → name is yellow (annotation)
+      [/(function)(\s+)([a-zA-Z_$][\w$]*)/, ["keyword", "", "annotation"]],
+
+      // Import/export statements — enter importStatement so all identifiers are light blue
       [
-        /(<)([\w$]+)(\s*)(\/)(>)/,
-        ["delimiter", "tag", "", "delimiter", "delimiter"],
+        /(import|export)(\s+)/,
+        ["keyword.import", { token: "", next: "@importStatement" }],
       ],
 
-      // JSX closing tag: </Component>
-      [/(<\/)([\w$]+)(>)/, ["delimiter", "tag", "delimiter"]],
-
-      // JSX opening tag start: <Component or <div
-      [/(<)([\w$]+)/, ["delimiter", { token: "tag", next: "@jsxAttributes" }]],
-
-      // Decorators
-      [/@[a-zA-Z_$][\w$]*/, "annotation"],
+      // Function calls: identifier followed by ( or < → yellow
+      [
+        /#?[a-zA-Z_$][\w$]*(?=\s*\()/,
+        {
+          cases: {
+            "@typeKeywords": "type",
+            "@importKeywords": "keyword.import",
+            "@controlKeywords": "keyword.control",
+            "@keywords": "keyword",
+            "@default": "annotation",
+          },
+        },
+      ],
 
       // Identifiers and keywords
       [
-        /[a-zA-Z_$][\w$]*/,
+        /#?[a-z_$][\w$]*/,
         {
           cases: {
-            "@typeKeywords": "type.identifier",
+            "@typeKeywords": "type",
+            "@importKeywords": "keyword.import",
+            "@controlKeywords": "keyword.control",
             "@keywords": "keyword",
             "@default": "identifier",
           },
         },
       ],
+      // PascalCase in code context → type.identifier (green for types/components)
+      [
+        /[A-Z][\w$]*/,
+        {
+          cases: {
+            "@typeKeywords": "type",
+            "@default": "type.identifier",
+          },
+        },
+      ],
 
-      // Whitespace
       { include: "@whitespace" },
 
       // Regular expression
@@ -203,8 +247,31 @@ export const jsxMonarchLanguage = {
       ],
 
       // Delimiters and operators
-      [/[{}()\[\]]/, "@brackets"],
-      [/[<>](?!@symbols)/, "@brackets"],
+      [/[()]/, "delimiter.parenthesis"],
+      [/[\[\]]/, "delimiter.square"],
+
+      // JSX tags — MUST come before generic <> handling
+      // Closing tags: </Component> or </div>
+      [
+        /(<\/)([A-Z][\w$]*)(>)/,
+        ["delimiter.html", "tag.component", "delimiter.html"],
+      ],
+      [/(<\/)([\w-]+)(>)/, ["delimiter.html", "tag", "delimiter.html"]],
+      // Fragment </>
+      [/<\/>/, "delimiter.html"],
+      // Opening tags: <Component or <div (enter attributes state)
+      [
+        /(<)([A-Z][\w$]*)/,
+        ["delimiter.html", { token: "tag.component", next: "@jsxAttributes" }],
+      ],
+      [
+        /(<)([\w-]+)/,
+        ["delimiter.html", { token: "tag", next: "@jsxAttributes" }],
+      ],
+
+      // Generic < > for comparison/generics (not JSX)
+      [/[<>](?!@symbols)/, "delimiter.angle"],
+      [/!(?=([^=]|$))/, "delimiter"],
       [
         /@symbols/,
         {
@@ -227,70 +294,164 @@ export const jsxMonarchLanguage = {
       [/[;,.]/, "delimiter"],
 
       // Strings
+      [/"([^"\\]|\\.)*$/, "string.invalid"],
+      [/'([^'\\]|\\.)*$/, "string.invalid"],
       [/"/, "string", "@string_double"],
       [/'/, "string", "@string_single"],
       [/`/, "string", "@string_backtick"],
     ],
 
+    // Import/export statement — all identifiers are light blue (identifier)
+    importStatement: [
+      [/\s+/, ""],
+      // End of import statement on semicolon or newline
+      [/;/, { token: "delimiter", next: "@pop" }],
+      [/\n/, { token: "", next: "@pop" }],
+      // from keyword
+      [/\bfrom\b/, "keyword.import"],
+      // as keyword
+      [/\bas\b/, "keyword.import"],
+      // default keyword
+      [/\bdefault\b/, "keyword.import"],
+      // type keyword in import type {}
+      [/\btype\b/, "keyword"],
+      // function declaration after export
+      [
+        /(function)(\s+)([a-zA-Z_$][\w$]*)/,
+        ["keyword", "", { token: "annotation", next: "@pop" }],
+      ],
+      // const/let/var after export — go to declarationName to make name yellow
+      [
+        /\b(const|let|var)\b/,
+        { token: "keyword", switchTo: "@declarationName" },
+      ],
+      // Braces for destructured imports
+      [/[{}]/, "delimiter.bracket"],
+      // Commas
+      [/,/, "delimiter"],
+      // All identifiers in import context are light blue
+      [/[a-zA-Z_$][\w$]*/, "identifier"],
+      // String (module path)
+      [/"/, "string", "@string_double"],
+      [/'/, "string", "@string_single"],
+      // Star for wildcard imports
+      [/\*/, "operator"],
+    ],
+
+    // After export const/let/var — next identifier is yellow (declaration name)
+    declarationName: [
+      [/\s+/, ""],
+      [/[a-zA-Z_$][\w$]*/, { token: "annotation", next: "@pop" }],
+      // Destructuring — pop back to normal
+      [/[{[]/, { token: "delimiter.bracket", next: "@pop" }],
+      // Fallback
+      [/./, { token: "", next: "@pop" }],
+    ],
+
     jsxAttributes: [
       [/\s+/, ""],
+      // Self-closing /> — pop back to code context
+      [/\/>/, { token: "delimiter.html", next: "@pop" }],
+      // Closing > — enter JSX content
+      [/>/, { token: "delimiter.html", switchTo: "@jsxContent" }],
+      // Attribute with expression value: key={expr}
       [
-        /([\w$\-]+)(\s*)(=)(\s*)(")/,
+        /([\w$-]+)(\s*)(=)(\s*)(\{)/,
         [
           "attribute.name",
           "",
           "delimiter",
           "",
-          { token: "attribute.value", next: "@jsxAttrStringDouble" },
+          { token: "delimiter.bracket", next: "@jsxExpression" },
         ],
       ],
+      // Attribute with double-quoted string
       [
-        /([\w$\-]+)(\s*)(=)(\s*)(')/,
+        /([\w$-]+)(\s*)(=)(\s*)(")/,
         [
           "attribute.name",
           "",
           "delimiter",
           "",
-          { token: "attribute.value", next: "@jsxAttrStringSingle" },
+          { token: "string", next: "@jsxAttrStringDouble" },
         ],
       ],
+      // Attribute with single-quoted string
       [
-        /([\w$\-]+)(\s*)(=)(\s*)(\{)/,
+        /([\w$-]+)(\s*)(=)(\s*)(')/,
         [
           "attribute.name",
           "",
           "delimiter",
           "",
-          { token: "delimiter", next: "@jsxExpression" },
+          { token: "string", next: "@jsxAttrStringSingle" },
         ],
       ],
-      [/[\w$\-]+/, "attribute.name"],
-      [/\/?>/, { token: "delimiter", next: "@pop" }],
+      // Boolean attribute
+      [/[\w$-]+/, "attribute.name"],
+    ],
+
+    // JSX content between tags — text is white (empty token)
+    jsxContent: [
+      // Closing tag — pop back
+      [
+        /(<\/)([A-Z][\w$]*)(>)/,
+        [
+          "delimiter.html",
+          "tag.component",
+          { token: "delimiter.html", next: "@pop" },
+        ],
+      ],
+      [
+        /(<\/)([\w-]+)(>)/,
+        ["delimiter.html", "tag", { token: "delimiter.html", next: "@pop" }],
+      ],
+      // Nested opening tag — component
+      [
+        /(<)([A-Z][\w$]*)/,
+        ["delimiter.html", { token: "tag.component", next: "@jsxAttributes" }],
+      ],
+      // Nested opening tag — html element
+      [
+        /(<)([\w-]+)/,
+        ["delimiter.html", { token: "tag", next: "@jsxAttributes" }],
+      ],
+      // Fragment </>
+      [/<\/>/, { token: "delimiter.html", next: "@pop" }],
+      // Expression in JSX content
+      [/\{/, { token: "delimiter.bracket", next: "@jsxExpression" }],
+      // Text content — white (empty token = editor.foreground)
+      [/[^<{]+/, ""],
     ],
 
     jsxAttrStringDouble: [
-      [/[^"]+/, "attribute.value"],
-      [/"/, { token: "attribute.value", next: "@pop" }],
+      [/[^"]+/, "string"],
+      [/"/, { token: "string", next: "@pop" }],
     ],
 
     jsxAttrStringSingle: [
-      [/[^']+/, "attribute.value"],
-      [/'/, { token: "attribute.value", next: "@pop" }],
+      [/[^']+/, "string"],
+      [/'/, { token: "string", next: "@pop" }],
     ],
 
     jsxExpression: [
-      [/\{/, "delimiter", "@jsxExpression"],
-      [/\}/, { token: "delimiter", next: "@pop" }],
-      { include: "root" },
+      [/\{/, "delimiter.bracket", "@jsxExpression"],
+      [/\}/, { token: "delimiter.bracket", next: "@pop" }],
+      { include: "common" },
     ],
 
     whitespace: [
       [/[ \t\r\n]+/, ""],
+      [/\/\*\*(?!\/)/, "comment.doc", "@jsdoc"],
       [/\/\*/, "comment", "@commentBlock"],
       [/\/\/.*$/, "comment"],
     ],
 
-    comment: [[/\/\/.*$/, "comment"]],
+    jsdoc: [
+      [/[^\/*]+/, "comment.doc"],
+      [/\*\//, "comment.doc", "@pop"],
+      [/[\/*]/, "comment.doc"],
+    ],
 
     commentBlock: [
       [/[^\/*]+/, "comment"],
@@ -323,7 +484,7 @@ export const jsxMonarchLanguage = {
     bracketCounting: [
       [/\{/, "delimiter.bracket", "@bracketCounting"],
       [/\}/, "delimiter.bracket", "@pop"],
-      { include: "root" },
+      { include: "common" },
     ],
 
     regexp: [

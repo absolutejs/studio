@@ -191,7 +191,12 @@ export const scanProjectPages = async (
       }
     }
 
-    pages.push({ name, route, framework, file });
+    pages.push({
+      name,
+      route,
+      framework,
+      file: file ? resolve(file) : undefined,
+    });
   }
 
   return pages;
@@ -1047,20 +1052,388 @@ export const writePageSource = async (filePath: string, content: string) => {
   await Bun.write(filePath, content);
 };
 
+/**
+ * Minimal csstype stub — the full file is 22K lines / 895KB and will
+ * choke the Monaco TS worker.  We only need the `Properties` interface
+ * so React's `CSSProperties` resolves.
+ */
+const CSSTYPE_STUB = `declare module "csstype" {
+  export interface Properties<TLength = (string & {}) | 0, TTime = string & {}> {
+    [key: string]: any;
+  }
+  export interface PropertiesHyphen<TLength = (string & {}) | 0, TTime = string & {}> {
+    [key: string]: any;
+  }
+}
+`;
+
+const VUE_STUB = `// Wildcard module declaration so .vue imports resolve without error
+declare module '*.vue' {
+  import type { Component } from 'vue';
+  const component: Component;
+  export default component;
+}
+
+// Vue compiler macros — these are globals in <script setup>, not imports
+
+/**
+ * Vue \`<script setup>\` compiler macro for declaring component props.
+ * The expected argument is the same as the component \`props\` option.
+ *
+ * Example runtime declaration:
+ * \`\`\`js
+ * // using Array syntax
+ * const props = defineProps(['foo', 'bar'])
+ * // using Object syntax
+ * const props = defineProps({ foo: String, bar: { type: Number, required: true } })
+ * \`\`\`
+ *
+ * Equivalent of \`props\` option in Options API.
+ *
+ * @see https://vuejs.org/api/sfc-script-setup.html#defineprops-defineemits
+ */
+declare function defineProps<T extends Record<string, any>>(): Readonly<T>;
+
+/**
+ * Vue \`<script setup>\` compiler macro for providing props default values
+ * when using type-based \`defineProps\` declaration.
+ *
+ * @see https://vuejs.org/api/sfc-script-setup.html#default-props-values-when-using-type-declaration
+ */
+declare function withDefaults<T extends Record<string, any>>(props: T, defaults: Partial<T>): T;
+
+/**
+ * Vue \`<script setup>\` compiler macro for declaring emitted events.
+ *
+ * @see https://vuejs.org/api/sfc-script-setup.html#defineprops-defineemits
+ */
+declare function defineEmits<T extends Record<string, any[]>>(): { (event: string, ...args: any[]): void };
+
+/**
+ * Vue \`<script setup>\` compiler macro for declaring component public instance properties.
+ *
+ * @see https://vuejs.org/api/sfc-script-setup.html#defineexpose
+ */
+declare function defineExpose(exposed?: Record<string, any>): void;
+
+/**
+ * Vue \`<script setup>\` compiler macro for declaring a two-way binding prop
+ * that can be consumed via \`v-model\` from the parent component.
+ *
+ * @see https://vuejs.org/api/sfc-script-setup.html#definemodel
+ */
+declare function defineModel<T>(name?: string, options?: any): import('vue').Ref<T>;
+
+/**
+ * Vue \`<script setup>\` compiler macro for declaring expected slots.
+ *
+ * @see https://vuejs.org/api/sfc-script-setup.html#defineslots
+ */
+declare function defineSlots<T>(): T;
+
+/**
+ * Vue \`<script setup>\` compiler macro for declaring component options.
+ *
+ * @see https://vuejs.org/api/sfc-script-setup.html#defineoptions
+ */
+declare function defineOptions(options: Record<string, any>): void;
+
+declare module "vue" {
+  export interface Ref<T = any> { value: T; }
+
+  /**
+   * Takes an inner value and returns a reactive and mutable ref object, which
+   * has a single property \`.value\` that points to the inner value.
+   *
+   * @param value - The object to wrap in the ref.
+   *
+   * @see https://vuejs.org/api/reactivity-core.html#ref
+   */
+  export function ref<T = undefined>(value?: T): Ref<T>;
+
+  /**
+   * Returns a reactive proxy of the object.
+   *
+   * @see https://vuejs.org/api/reactivity-core.html#reactive
+   */
+  export function reactive<T extends object>(target: T): T;
+
+  /**
+   * Takes a getter function and returns a readonly reactive ref object for the
+   * returned value from the getter. It can also take an object with get and set
+   * functions to create a writable ref object.
+   *
+   * @see https://vuejs.org/api/reactivity-core.html#computed
+   */
+  export function computed<T>(getter: () => T): Readonly<Ref<T>>;
+  export function computed<T>(options: { get: () => T; set: (v: T) => void }): Ref<T>;
+  export function watch(source: any, cb: Function, options?: { immediate?: boolean; deep?: boolean; flush?: string }): () => void;
+  export function watchEffect(effect: () => void, options?: { flush?: string }): () => void;
+  export function watchPostEffect(effect: () => void): () => void;
+  export function watchSyncEffect(effect: () => void): () => void;
+  export function onMounted(hook: () => void): void;
+  export function onUnmounted(hook: () => void): void;
+  export function onBeforeMount(hook: () => void): void;
+  export function onBeforeUnmount(hook: () => void): void;
+  export function onUpdated(hook: () => void): void;
+  export function onBeforeUpdate(hook: () => void): void;
+  export function onActivated(hook: () => void): void;
+  export function onDeactivated(hook: () => void): void;
+  export function onErrorCaptured(hook: (err: Error, instance: any, info: string) => boolean | void): void;
+  export function defineProps<T extends Record<string, any>>(): Readonly<T>;
+  export function withDefaults<T extends Record<string, any>>(props: T, defaults: Partial<T>): T;
+  export function defineEmits<T extends Record<string, any[]>>(): { (event: string, ...args: any[]): void };
+  export function defineExpose(exposed?: Record<string, any>): void;
+  export function defineModel<T>(name?: string, options?: any): Ref<T>;
+  export function defineSlots<T>(): T;
+  export function defineOptions(options: Record<string, any>): void;
+  export function nextTick(fn?: () => void): Promise<void>;
+  export function inject<T>(key: string | symbol): T | undefined;
+  export function inject<T>(key: string | symbol, defaultValue: T): T;
+  export function provide(key: string | symbol, value: any): void;
+  export function toRefs<T extends object>(object: T): { [K in keyof T]: Ref<T[K]> };
+  export function toRef<T extends object, K extends keyof T>(object: T, key: K): Ref<T[K]>;
+  export function toRef<T>(value: T): Ref<T>;
+  export function unref<T>(ref: Ref<T> | T): T;
+  export function isRef<T>(value: Ref<T> | unknown): value is Ref<T>;
+  export function shallowRef<T = undefined>(value?: T): Ref<T>;
+  export function triggerRef(ref: Ref): void;
+  export function customRef<T>(factory: (track: () => void, trigger: () => void) => { get: () => T; set: (value: T) => void }): Ref<T>;
+  export function readonly<T extends object>(target: T): Readonly<T>;
+  export function shallowReactive<T extends object>(target: T): T;
+  export function shallowReadonly<T extends object>(target: T): Readonly<T>;
+  export function toRaw<T>(observed: T): T;
+  export function markRaw<T extends object>(value: T): T;
+  export function effectScope(detached?: boolean): { run<T>(fn: () => T): T; stop(): void };
+  export function getCurrentScope(): any;
+  export function onScopeDispose(fn: () => void): void;
+  export interface Component {}
+  export interface App<T = any> { mount(el: string | Element): any; unmount(): void; use(plugin: any, ...options: any[]): App<T>; component(name: string, comp?: Component): any; directive(name: string, dir?: any): any; provide(key: string | symbol, value: any): App<T>; }
+  export function createApp(rootComponent: Component, rootProps?: Record<string, any>): App;
+  export function h(type: any, props?: any, children?: any): any;
+  export function resolveComponent(name: string): any;
+  export function resolveDirective(name: string): any;
+  export function useSlots(): any;
+  export function useAttrs(): Record<string, any>;
+}
+`;
+
+const SVELTE_STUB = `// Wildcard module declaration so .svelte imports resolve without error
+declare module '*.svelte' {
+  const component: any;
+  export default component;
+}
+
+// Svelte 5 runes — these are compiler intrinsics, declared globally
+
+/**
+ * Declares reactive state.
+ *
+ * Example:
+ * \`\`\`js
+ * let count = $state(0);
+ * \`\`\`
+ *
+ * @see https://svelte.dev/docs/svelte/$state
+ */
+declare function $state<T>(value: T): T;
+declare function $state<T>(): T | undefined;
+declare namespace $state {
+  /**
+   * Declares reactive read-only state. Changes to the value will cause a compiler error.
+   *
+   * @see https://svelte.dev/docs/svelte/$state#$state.frozen
+   */
+  export function frozen<T>(value: T): Readonly<T>;
+  export function frozen<T>(): Readonly<T> | undefined;
+  /**
+   * To take a static snapshot of a deeply reactive \`$state\` proxy, use \`$state.snapshot\`.
+   *
+   * @see https://svelte.dev/docs/svelte/$state#$state.snapshot
+   */
+  export function snapshot<T>(state: T): T;
+}
+
+/**
+ * Declares derived state, i.e. one that depends on other state variables.
+ * The expression inside \`$derived(...)\` should be free of side-effects.
+ *
+ * Example:
+ * \`\`\`js
+ * let doubled = $derived(count * 2);
+ * \`\`\`
+ *
+ * @see https://svelte.dev/docs/svelte/$derived
+ */
+declare function $derived<T>(expression: T): T;
+declare namespace $derived {
+  /**
+   * Sometimes you need to create complex derivations that don't fit inside a short expression.
+   * In these cases, you can use \`$derived.by\` which accepts a function as its argument.
+   *
+   * @see https://svelte.dev/docs/svelte/$derived#$derived.by
+   */
+  export function by<T>(fn: () => T): T;
+}
+
+/**
+ * Runs code when a component is mounted, or when its dependencies change. The function
+ * passed to \`$effect\` will run after the DOM has been updated.
+ *
+ * Example:
+ * \`\`\`js
+ * $effect(() => {
+ *   console.log(count);
+ * });
+ * \`\`\`
+ *
+ * @see https://svelte.dev/docs/svelte/$effect
+ */
+declare function $effect(fn: () => void | (() => void)): void;
+declare namespace $effect {
+  /**
+   * Runs code right before the DOM is updated. Useful when you need to do manual DOM manipulation.
+   *
+   * @see https://svelte.dev/docs/svelte/$effect#$effect.pre
+   */
+  export function pre(fn: () => void | (() => void)): void;
+  /**
+   * Returns whether the current code is running inside a tracking context (an effect or a template).
+   *
+   * @see https://svelte.dev/docs/svelte/$effect#$effect.tracking
+   */
+  export function tracking(): boolean;
+  /**
+   * Creates a non-tracked scope that doesn't auto-cleanup.
+   *
+   * @see https://svelte.dev/docs/svelte/$effect#$effect.root
+   */
+  export function root(fn: () => void | (() => void)): () => void;
+}
+
+/**
+ * Declares the props that a component accepts. Example:
+ *
+ * \`\`\`js
+ * let { optionalProp = 42, requiredProp, bindableProp = $bindable() }: {
+ *   optionalProp?: number;
+ *   requiredProp: string;
+ *   bindableProp: boolean;
+ * } = $props();
+ * \`\`\`
+ *
+ * @see https://svelte.dev/docs/svelte/$props
+ */
+declare function $props<T extends Record<string, any>>(): T;
+
+/**
+ * Declares a prop as bindable, meaning the parent component can use \`bind:\` with it.
+ *
+ * @see https://svelte.dev/docs/svelte/$bindable
+ */
+declare function $bindable<T>(value?: T): T;
+
+/**
+ * Inspects one or more values whenever they, or the properties they contain, change.
+ * \`$inspect\` only works during development.
+ *
+ * Example:
+ * \`\`\`js
+ * $inspect(count).with(console.trace);
+ * \`\`\`
+ *
+ * @see https://svelte.dev/docs/svelte/$inspect
+ */
+declare function $inspect<T extends any[]>(...values: T): { with(fn: (type: string, ...values: T) => void): void };
+
+/**
+ * Retrieves the \`this\` reference of the custom element that contains this component.
+ * Only available inside custom element components.
+ *
+ * @see https://svelte.dev/docs/svelte/$host
+ */
+declare function $host(): HTMLElement;
+
+declare module "svelte" {
+  export function onMount(fn: () => void | (() => void)): void;
+  export function onDestroy(fn: () => void): void;
+  export function beforeUpdate(fn: () => void): void;
+  export function afterUpdate(fn: () => void): void;
+  export function tick(): Promise<void>;
+  export function createEventDispatcher<T = any>(): (type: string, detail?: T) => void;
+  export function setContext<T>(key: any, context: T): T;
+  export function getContext<T>(key: any): T;
+  export function getAllContexts(): Map<any, any>;
+  export function hasContext(key: any): boolean;
+  export function mount(component: any, options: { target: Element; props?: Record<string, any>; intro?: boolean }): any;
+  export function unmount(component: any): void;
+  export function untrack<T>(fn: () => T): T;
+  export function flushSync(fn?: () => void): void;
+}
+declare module "svelte/store" {
+  export interface Readable<T> { subscribe(run: (value: T) => void): () => void; }
+  export interface Writable<T> extends Readable<T> { set(value: T): void; update(fn: (value: T) => T): void; }
+  export function writable<T>(value: T, start?: (set: (value: T) => void) => void | (() => void)): Writable<T>;
+  export function readable<T>(value: T, start?: (set: (value: T) => void) => void | (() => void)): Readable<T>;
+  export function derived<T>(stores: Readable<any> | Readable<any>[], fn: Function, initial_value?: T): Readable<T>;
+  export function get<T>(store: Readable<T>): T;
+  export function readonly<T>(store: Readable<T>): Readable<T>;
+}
+declare module "svelte/transition" {
+  interface TransitionConfig { delay?: number; duration?: number; easing?: (t: number) => number; css?: (t: number, u: number) => string; tick?: (t: number, u: number) => void; }
+  export function fade(node: Element, params?: { delay?: number; duration?: number; easing?: (t: number) => number }): TransitionConfig;
+  export function fly(node: Element, params?: { delay?: number; duration?: number; easing?: (t: number) => number; x?: number; y?: number; opacity?: number }): TransitionConfig;
+  export function slide(node: Element, params?: { delay?: number; duration?: number; easing?: (t: number) => number; axis?: "x" | "y" }): TransitionConfig;
+  export function scale(node: Element, params?: { delay?: number; duration?: number; easing?: (t: number) => number; start?: number; opacity?: number }): TransitionConfig;
+  export function blur(node: Element, params?: { delay?: number; duration?: number; easing?: (t: number) => number; amount?: number; opacity?: number }): TransitionConfig;
+  export function draw(node: SVGElement, params?: { delay?: number; duration?: number; easing?: (t: number) => number; speed?: number }): TransitionConfig;
+  export function crossfade(params?: { delay?: number; duration?: number; easing?: (t: number) => number; fallback?: (node: Element, params: any) => TransitionConfig }): [(node: Element, params: any) => TransitionConfig, (node: Element, params: any) => TransitionConfig];
+}
+declare module "svelte/motion" {
+  import type { Readable } from "svelte/store";
+  export interface Tweened<T> extends Readable<T> { set(value: T, opts?: { delay?: number; duration?: number; easing?: (t: number) => number; interpolate?: (a: T, b: T) => (t: number) => T }): Promise<void>; update(fn: (value: T) => T, opts?: any): Promise<void>; }
+  export interface Spring<T> extends Readable<T> { set(value: T, opts?: { hard?: boolean; soft?: boolean | number }): Promise<void>; update(fn: (value: T) => T, opts?: any): Promise<void>; stiffness: number; damping: number; precision: number; }
+  export function tweened<T>(value?: T, defaults?: any): Tweened<T>;
+  export function spring<T>(value?: T, opts?: { stiffness?: number; damping?: number; precision?: number }): Spring<T>;
+}
+declare module "svelte/animate" {
+  export function flip(node: Element, from: DOMRect, params?: { delay?: number; duration?: number | ((len: number) => number); easing?: (t: number) => number }): any;
+}
+`;
+
 export const getTypeDefinitions = async () => {
   const result: Record<string, string> = {};
 
-  try {
-    const reactTypes = await Bun.file(
-      "node_modules/@types/react/index.d.ts",
-    ).text();
-    result["@types/react/index.d.ts"] = reactTypes;
+  /** Try to read a type file; silently skip if it doesn't exist. */
+  const tryLoad = async (nodeModulePath: string, key?: string) => {
+    try {
+      const content = await Bun.file(`node_modules/${nodeModulePath}`).text();
+      result[key ?? nodeModulePath] = content;
+    } catch {
+      // Package not installed — skip
+    }
+  };
 
-    const cssTypes = await Bun.file("node_modules/csstype/index.d.ts").text();
-    result["csstype/index.d.ts"] = cssTypes;
-  } catch {
-    // Return empty on error
-  }
+  await Promise.all([
+    // React — the TS worker needs these to provide types for .tsx files
+    tryLoad("@types/react/index.d.ts"),
+    tryLoad("@types/react/global.d.ts"),
+    tryLoad("@types/react/jsx-runtime.d.ts"),
+    tryLoad("@types/react/jsx-dev-runtime.d.ts"),
+    tryLoad("@types/react-dom/index.d.ts"),
+    // Angular — loaded only if the user has @angular/core installed
+    tryLoad("@angular/core/index.d.ts"),
+    tryLoad("@angular/common/index.d.ts"),
+  ]);
+
+  // Use minimal csstype stub instead of the 895KB full file
+  result["csstype/index.d.ts"] = CSSTYPE_STUB;
+
+  // Minimal Vue stub so <script setup> blocks get ref/reactive/computed types
+  result["vue/index.d.ts"] = VUE_STUB;
+
+  // Minimal Svelte stub so <script> blocks get $state/$derived/$props types
+  result["svelte/index.d.ts"] = SVELTE_STUB;
 
   return result;
 };
@@ -1546,7 +1919,9 @@ export const resolveLocalImports = async (filePath: string, depth = 0) => {
       const file = Bun.file(resolved);
       if (await file.exists()) {
         const importContent = await file.text();
-        result[importPath] = importContent;
+        // Use the resolved path as key (with correct extension) so the
+        // Monaco editor can create models at the right URI.
+        result[resolved] = importContent;
 
         if (depth < 1) {
           const nested = await resolveLocalImports(resolved, depth + 1);

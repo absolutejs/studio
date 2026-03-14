@@ -425,6 +425,84 @@
 .studio-source-editor {
   width: 100%;
   flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.studio-tab-bar {
+  display: flex;
+  background: #181825;
+  border-bottom: 1px solid #313244;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  flex-shrink: 0;
+  min-height: 35px;
+}
+
+.studio-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #6c7086;
+  cursor: pointer;
+  border-right: 1px solid #313244;
+  white-space: nowrap;
+  user-select: none;
+  min-width: 0;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+
+.studio-tab:hover {
+  color: #cdd6f4;
+  background: #1e1e2e;
+}
+
+.studio-tab-active {
+  color: #cdd6f4;
+  background: #1e1e2e;
+  border-bottom: 2px solid #89b4fa;
+}
+
+.studio-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+.studio-tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: none;
+  color: #6c7086;
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  flex-shrink: 0;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    color 0.15s,
+    background 0.15s;
+}
+
+.studio-tab:hover .studio-tab-close,
+.studio-tab-active .studio-tab-close {
+  opacity: 1;
+}
+
+.studio-tab-close:hover {
+  color: #cdd6f4;
+  background: #45475a;
 }
 
 .studio-main-empty {
