@@ -58,6 +58,31 @@ export const iframeOverlayScript = `
         overlay.style.display = 'block';
     }
 
+    function getSourceLocation(el) {
+        try {
+            var keys = [];
+            try { keys = Object.getOwnPropertyNames(el); } catch(e2) { return null; }
+            for (var i = 0; i < keys.length; i++) {
+                var key = keys[i];
+                if (key.indexOf('__reactFiber') === 0 || key.indexOf('__reactInternalInstance') === 0) {
+                    var fiber = el[key];
+                    while (fiber) {
+                        if (fiber._debugSource) {
+                            return {
+                                fileName: fiber._debugSource.fileName || null,
+                                lineNumber: fiber._debugSource.lineNumber || null,
+                                columnNumber: fiber._debugSource.columnNumber || null
+                            };
+                        }
+                        fiber = fiber['return'];
+                    }
+                    break;
+                }
+            }
+        } catch(e) { console.warn('[studio] getSourceLocation error: ' + e.message); }
+        return null;
+    }
+
     function getElementInfo(el) {
         const attrs = {};
         for (const attr of el.attributes) {
@@ -70,7 +95,8 @@ export const iframeOverlayScript = `
             id: el.id || '',
             className: el.className || '',
             textContent: (el.textContent || '').slice(0, 200),
-            attributes: attrs
+            attributes: attrs,
+            sourceLocation: getSourceLocation(el)
         };
     }
 
@@ -115,6 +141,8 @@ export const iframeOverlayScript = `
         if (selectedElement && selectOverlay.style.display !== 'none') {
             positionOverlay(selectOverlay, selectedElement.getBoundingClientRect());
         }
+        hoverOverlay.style.display = 'none';
+        label.style.display = 'none';
     });
 
     window.addEventListener('message', function(e) {

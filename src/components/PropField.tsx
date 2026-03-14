@@ -1,13 +1,23 @@
-import React from "react";
+import React, { useState } from "react";
 import type { StudioPropField } from "../../types/studio";
+import { AssetBrowser, FolderIcon } from "./AssetBrowser";
 
 type PropFieldProps = {
   field: StudioPropField;
   value: unknown;
   onChange: (value: unknown) => void;
+  assets?: { files: string[]; root: string | null } | null;
 };
 
-export const PropField = ({ field, value, onChange }: PropFieldProps) => {
+export const PropField = ({
+  field,
+  value,
+  onChange,
+  assets,
+}: PropFieldProps) => {
+  const [showBrowser, setShowBrowser] = useState(false);
+  const hasAssets = assets && assets.files.length > 0;
+
   switch (field.type) {
     case "string":
       return (
@@ -70,13 +80,37 @@ export const PropField = ({ field, value, onChange }: PropFieldProps) => {
 
     case "image":
       return (
-        <input
-          className="studio-inspector-value"
-          type="text"
-          placeholder="Image URL or path"
-          value={(value as string) ?? ""}
-          onChange={(e) => onChange(e.target.value)}
-        />
+        <div>
+          <div className={hasAssets ? "studio-asset-input-row" : ""}>
+            <input
+              className="studio-inspector-value"
+              type="text"
+              placeholder="Image URL or path"
+              value={(value as string) ?? ""}
+              onChange={(e) => onChange(e.target.value)}
+            />
+            {hasAssets && (
+              <button
+                className="studio-btn studio-btn-sm studio-asset-browse-btn"
+                onClick={() => setShowBrowser(!showBrowser)}
+                title="Browse assets"
+              >
+                <FolderIcon />
+              </button>
+            )}
+          </div>
+          {showBrowser && assets && (
+            <AssetBrowser
+              files={assets.files}
+              root={assets.root}
+              onSelect={(path) => {
+                onChange(path);
+                setShowBrowser(false);
+              }}
+              onClose={() => setShowBrowser(false)}
+            />
+          )}
+        </div>
       );
 
     default:

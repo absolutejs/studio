@@ -1,5 +1,5 @@
 import { Elysia } from "elysia";
-import { join, basename } from "path";
+import { join, basename, relative } from "path";
 import { asset, handleReactPageRequest, prepare } from "@absolutejs/absolute";
 import { StudioEditor } from "./pages/StudioEditor";
 import {
@@ -37,6 +37,7 @@ type StudioConfig = {
   htmxDirectory?: string;
   angularDirectory?: string;
   stylesDirectory?: string;
+  assetsDirectory?: string;
   /** Called after bun install to restart the dev server with a clean module cache. */
   restartDevServer?: () => Promise<void>;
 };
@@ -600,6 +601,49 @@ export const startStudio = async (config: StudioConfig = {}) => {
     // Project info
     .get("/api/project", () => {
       return { devServerUrl, projectDir };
+    })
+
+    // Assets — list files in the configured assets directory
+    .get("/api/assets", async () => {
+      const assetsDir = config.assetsDirectory;
+      if (!assetsDir) return { files: [], root: null };
+
+      const { existsSync } = await import("fs");
+      if (!existsSync(assetsDir)) return { files: [], root: null };
+
+      const { Glob } = await import("bun");
+      const glob = new Glob("**/*");
+      const entries: string[] = [];
+
+      for await (const entry of glob.scan({
+        cwd: assetsDir,
+        onlyFiles: true,
+      })) {
+        entries.push(entry);
+      }
+
+      // Sort by directory structure then filename
+      entries.sort((a, b) => {
+        const aParts = a.split("/");
+        const bParts = b.split("/");
+        // Compare directory by directory
+        const minLen = Math.min(aParts.length, bParts.length);
+        for (let i = 0; i < minLen - 1; i++) {
+          const cmp = aParts[i]!.localeCompare(bParts[i]!);
+          if (cmp !== 0) return cmp;
+        }
+        // Directories come before files at the same level
+        if (aParts.length !== bParts.length)
+          return aParts.length - bParts.length;
+        return aParts[aParts.length - 1]!.localeCompare(
+          bParts[bParts.length - 1]!,
+        );
+      });
+
+      return {
+        files: entries,
+        root: relative(projectDir, assetsDir) || assetsDir,
+      };
     })
 
     // Scripts

@@ -9,12 +9,14 @@ type PropsPanelProps = {
   block: StudioBlockInstance | null;
   definition: StudioBlockDefinition | null;
   onChange: (blockId: string, propName: string, value: unknown) => void;
+  assets?: { files: string[]; root: string | null } | null;
 };
 
 export const PropsPanel = ({
   block,
   definition,
   onChange,
+  assets,
 }: PropsPanelProps) => {
   if (!block || !definition) {
     return (
@@ -38,6 +40,7 @@ export const PropsPanel = ({
             field={field}
             value={block.props[propName] ?? field.defaultValue}
             onChange={(value) => onChange(block.id, propName, value)}
+            assets={assets}
           />
         </div>
       ))}

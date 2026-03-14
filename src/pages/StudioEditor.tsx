@@ -40,6 +40,11 @@ type SelectedElement = {
   className: string;
   textContent: string;
   attributes: Record<string, string>;
+  sourceLocation?: {
+    fileName: string | null;
+    lineNumber: number | null;
+    columnNumber: number | null;
+  } | null;
 };
 
 type ScriptInfo = {
@@ -884,6 +889,15 @@ const StudioEditorInner = ({
     },
   });
 
+  const { data: assetsData } = useQuery({
+    queryKey: ["assets"],
+    queryFn: async () => {
+      const { data } = await client.api.assets.get();
+      return data as { files: string[]; root: string | null } | null;
+    },
+    staleTime: 60_000,
+  });
+
   const currentFramework = currentPage?.framework ?? "";
   const hasComponents =
     currentFramework !== "html" &&
@@ -1269,23 +1283,103 @@ const StudioEditorInner = ({
     [runScript],
   );
 
-  const handleTextChange = useCallback((value: string) => {
-    if (iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        { type: "__studio_update_text", value },
-        "*",
-      );
-    }
-  }, []);
+  /** Read a source file, apply a transform, and save it back.
+   *  Uses the React fiber source location if available, otherwise
+   *  tries the page file then searches its local dependencies. */
+  const editSource = useCallback(
+    async (transform: (content: string) => string | null) => {
+      const pageFile = currentPage?.file;
+      if (!pageFile) return;
 
-  const handleAttributeChange = useCallback((name: string, value: string) => {
-    if (iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        { type: "__studio_update_attr", name, value },
-        "*",
-      );
-    }
-  }, []);
+      const saveFile = async (file: string, content: string) => {
+        await saveSource.mutateAsync({ file, content });
+        if (file === (activeTabPath ?? pageFile)) {
+          setSourceContent(content);
+        }
+        setTabs((prev) =>
+          prev.map((t) => (t.path === file ? { ...t, content } : t)),
+        );
+      };
+
+      const tryFile = async (file: string): Promise<boolean> => {
+        const { data: src } = await client.api.source.get({
+          query: { file },
+        });
+        if (!src?.content) return false;
+        const updated = transform(src.content);
+        if (!updated || updated === src.content) return false;
+        await saveFile(file, updated);
+        return true;
+      };
+
+      // If we have an exact source location from the React fiber, use it directly
+      const sourceFile = selectedElement?.sourceLocation?.fileName;
+      if (sourceFile && (await tryFile(sourceFile))) return;
+
+      // Try page file
+      if (await tryFile(pageFile)) return;
+
+      // Search dependency files
+      try {
+        const { data: depMap } = await client.api.deps.get({
+          query: { file: pageFile },
+        });
+        if (depMap) {
+          for (const depFile of Object.keys(depMap as Record<string, string>)) {
+            if (await tryFile(depFile)) return;
+          }
+        }
+      } catch {
+        // deps endpoint unavailable
+      }
+    },
+    [currentPage, activeTabPath, selectedElement, saveSource],
+  );
+
+  const handleTextChange = useCallback(
+    (value: string) => {
+      if (!selectedElement) return;
+      const oldText = selectedElement.textContent.slice(0, 100);
+      editSource((content) => {
+        const idx = content.indexOf(oldText);
+        if (idx === -1) return null;
+        return (
+          content.slice(0, idx) + value + content.slice(idx + oldText.length)
+        );
+      });
+    },
+    [selectedElement, editSource],
+  );
+
+  const handleAttributeChange = useCallback(
+    (name: string, value: string, oldValue?: string) => {
+      editSource((content) => {
+        const prev = oldValue ?? selectedElement?.attributes?.[name] ?? "";
+        const escaped = prev.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        // Match: name="value" or name='value' or name={`value`} or name={"value"}
+        const pattern = new RegExp(
+          `(${name}\\s*=\\s*)(?:"${escaped}"|'${escaped}'|\\{[\`"]${escaped}[\`"]\\})`,
+        );
+        const match = content.match(pattern);
+        if (!match) return null;
+
+        let replacement: string;
+        if (match[0].includes("{")) {
+          const wrapper = match[0].includes("{`") ? "`" : '"';
+          replacement = `${match[1]}{${wrapper}${value}${wrapper}}`;
+        } else {
+          replacement = `${match[1]}"${value}"`;
+        }
+
+        return (
+          content.slice(0, match.index!) +
+          replacement +
+          content.slice(match.index! + match[0].length)
+        );
+      });
+    },
+    [selectedElement, editSource],
+  );
 
   const handleOpenEditor = useCallback(async () => {
     if (!currentPage?.file) return;
@@ -2119,6 +2213,7 @@ const StudioEditorInner = ({
                   selectedElement={selectedElement}
                   onAttributeChange={handleAttributeChange}
                   onTextChange={handleTextChange}
+                  assets={assetsData}
                 />
               </div>
             )}

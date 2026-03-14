@@ -857,6 +857,199 @@ input[type="number"].studio-inspector-value::-webkit-outer-spin-button {
 }
 
 /* ============================================================
+   Asset Browser
+   ============================================================ */
+
+.studio-asset-input-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.studio-asset-input-row .studio-inspector-value {
+  flex: 1;
+  min-width: 0;
+}
+
+.studio-asset-browse-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 6px !important;
+  color: var(--studio-text-muted);
+  transition: color 0.15s ease;
+}
+
+.studio-asset-browse-btn:hover {
+  color: var(--studio-blue);
+}
+
+.studio-asset-browser {
+  margin-top: 8px;
+  border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius);
+  background: var(--studio-bg-secondary);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  animation: studio-dropdown-in 0.12s ease-out;
+}
+
+.studio-asset-browser-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px 6px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--studio-surface) 40%, var(--studio-bg-secondary)),
+    var(--studio-bg-secondary)
+  );
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.studio-asset-browser-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--studio-text-muted);
+  user-select: none;
+}
+
+.studio-asset-expand-btn {
+  background: none;
+  border: none;
+  color: var(--studio-text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s ease;
+}
+
+.studio-asset-expand-btn:hover {
+  color: var(--studio-text);
+}
+
+.studio-asset-browser-search {
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.studio-asset-browser-search .studio-inspector-value {
+  font-size: 12px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 0;
+  background: var(--studio-bg-tertiary);
+}
+
+.studio-asset-browser-tree {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+  background: linear-gradient(
+    to bottom,
+    var(--studio-bg-secondary),
+    var(--studio-bg-tertiary)
+  );
+}
+
+.studio-asset-browser-tree::-webkit-scrollbar {
+  width: 6px;
+}
+
+.studio-asset-browser-tree::-webkit-scrollbar-thumb {
+  background: var(--studio-border);
+  border-radius: 3px;
+}
+
+.studio-asset-browser-tree {
+  scrollbar-width: thin;
+  scrollbar-color: var(--studio-border) transparent;
+}
+
+.studio-asset-browser-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--studio-text-muted);
+}
+
+.studio-asset-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 4px;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease;
+}
+
+.studio-asset-tree-dir {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--studio-text-muted);
+  padding-top: 8px;
+  padding-bottom: 4px;
+}
+
+.studio-asset-tree-dir:hover {
+  color: var(--studio-text);
+}
+
+.studio-asset-tree-count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--studio-text-muted);
+  background: var(--studio-surface);
+  padding: 1px 6px;
+  border-radius: 8px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.studio-asset-tree-file {
+  font-size: 13px;
+  font-family: var(--studio-font-mono);
+  color: var(--studio-text-secondary);
+}
+
+.studio-asset-tree-file:hover {
+  background: var(--studio-surface);
+  color: var(--studio-text);
+}
+
+.studio-asset-tree-ext {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--studio-text-muted);
+  background: var(--studio-surface);
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  font-family: var(--studio-font-mono);
+}
+
+.studio-asset-tree-file:hover .studio-asset-tree-ext {
+  color: var(--studio-blue);
+}
+
+.studio-asset-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ============================================================
    Scripts Output
    ============================================================ */
 

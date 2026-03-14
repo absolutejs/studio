@@ -277,6 +277,9 @@ const main = async () => {
       stylesDirectory: projectConfig.stylesConfig
         ? join(projectDir, projectConfig.stylesConfig as string)
         : undefined,
+      assetsDirectory: projectConfig.assetsDirectory
+        ? join(projectDir, projectConfig.assetsDirectory as string)
+        : undefined,
     });
   } catch (err) {
     console.error(`${RED}[studio] Failed to start:${RESET}`, err);
