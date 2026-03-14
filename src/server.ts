@@ -18,6 +18,7 @@ import {
   writePageSource,
   getTypeDefinitions,
   resolveLocalImports,
+  scanFrameworkComponents,
 } from "./project";
 import type { StudioFramework } from "../types/studio";
 import { openInEditor } from "./openEditor";
@@ -457,6 +458,19 @@ export const startStudio = async (config: StudioConfig = {}) => {
         result.directory;
 
       return { framework, directory: result.directory };
+    })
+
+    // Components API — scan framework directory for custom components
+    .get("/api/components", async ({ query }) => {
+      const framework = (query as Record<string, string>)
+        .framework as StudioFramework;
+      if (!framework) return [];
+
+      const configured = getConfiguredFrameworks(scanConfig);
+      const entry = configured.find((c) => c.framework === framework);
+      if (!entry) return [];
+
+      return await scanFrameworkComponents(framework, entry.directory);
     })
 
     // Framework reorganization

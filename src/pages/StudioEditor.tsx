@@ -47,6 +47,12 @@ type ScriptInfo = {
   category: string;
 };
 
+type ComponentTreeNode = {
+  name: string;
+  path: string;
+  children?: ComponentTreeNode[];
+};
+
 type LayoutMode = "preview" | "source" | "split";
 
 type EditorTab = {
@@ -231,6 +237,70 @@ const SplitIcon = () => (
   </svg>
 );
 
+/** Flatten single-child directory wrappers (e.g. a lone "components/" folder) */
+const flattenComponentTree = (
+  nodes: ComponentTreeNode[],
+): ComponentTreeNode[] => {
+  if (nodes.length === 1 && nodes[0]!.children) {
+    return flattenComponentTree(nodes[0]!.children);
+  }
+  return nodes;
+};
+
+const ComponentTree = ({
+  nodes,
+  depth = 0,
+  collapsedState,
+}: {
+  nodes: ComponentTreeNode[];
+  depth?: number;
+  collapsedState: [Set<string>, (path: string) => void];
+}) => {
+  const [collapsed, toggle] = collapsedState;
+
+  return (
+    <>
+      {nodes.map((node) =>
+        node.children ? (
+          <div key={node.path}>
+            <div
+              className="studio-element-category studio-element-category-toggle studio-component-subfolder"
+              style={{ paddingLeft: `${depth * 12}px` }}
+              onClick={() => toggle(node.path)}
+            >
+              <span
+                className={`studio-category-chevron ${collapsed.has(node.path) ? "" : "studio-category-chevron-open"}`}
+              >
+                &#9654;
+              </span>
+              <span>{node.name}</span>
+            </div>
+            {!collapsed.has(node.path) && (
+              <ComponentTree
+                nodes={node.children}
+                depth={depth + 1}
+                collapsedState={collapsedState}
+              />
+            )}
+          </div>
+        ) : (
+          <div
+            className="studio-element-item"
+            draggable
+            key={node.path}
+            style={{ paddingLeft: `${8 + depth * 12}px` }}
+            onDragStart={(e) => {
+              e.dataTransfer.setData("text/plain", `<${node.name} />`);
+            }}
+          >
+            &lt;{node.name} /&gt;
+          </div>
+        ),
+      )}
+    </>
+  );
+};
+
 const StudioEditorInner = ({
   devServerUrl = "http://localhost:3000",
   cssPath,
@@ -274,6 +344,21 @@ const StudioEditorInner = ({
     framework: string;
   } | null>(null);
   const [deletingRoute, setDeletingRoute] = useState<string | null>(null);
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(
+    () => new Set(["Custom", ...Object.keys(ELEMENT_CATEGORIES)]),
+  );
+
+  const [componentFolderCollapsed, setComponentFolderCollapsed] = useState<
+    Set<string>
+  >(() => new Set());
+  const toggleComponentFolder = useCallback((path: string) => {
+    setComponentFolderCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
@@ -281,7 +366,6 @@ const StudioEditorInner = ({
   const pagesDropdownRef = useRef<HTMLDivElement>(null);
   const panelsDropdownRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
-
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -351,6 +435,23 @@ const StudioEditorInner = ({
       const { data } = await client.api.scripts.get();
       return (data ?? []) as ScriptInfo[];
     },
+  });
+
+  const currentFramework = currentPage?.framework ?? "";
+  const hasComponents =
+    currentFramework !== "html" &&
+    currentFramework !== "htmx" &&
+    !!currentFramework;
+
+  const { data: customComponents = [] } = useQuery({
+    queryKey: ["components", currentFramework],
+    queryFn: async () => {
+      const { data } = await client.api.components.get({
+        query: { framework: currentFramework },
+      });
+      return (data ?? []) as ComponentTreeNode[];
+    },
+    enabled: hasComponents,
   });
 
   const sourceEditorVisible = layout === "source" || layout === "split";
@@ -880,6 +981,24 @@ const StudioEditorInner = ({
   }, []);
 
   // --- Derived ---
+  const toggleCategory = useCallback((category: string) => {
+    setCollapsedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      return next;
+    });
+  }, []);
+
+  const countComponentLeaves = (nodes: ComponentTreeNode[]): number => {
+    let count = 0;
+    for (const node of nodes) {
+      if (node.children) count += countComponentLeaves(node.children);
+      else count++;
+    }
+    return count;
+  };
+
   const filteredCategories = Object.entries(ELEMENT_CATEGORIES)
     .map(([category, elements]) => {
       const filtered = searchQuery
@@ -1020,7 +1139,10 @@ const StudioEditorInner = ({
               </button>
 
               {/* Mobile: combined panels dropdown */}
-              <div className="studio-panels-dropdown studio-mobile-only" ref={panelsDropdownRef}>
+              <div
+                className="studio-panels-dropdown studio-mobile-only"
+                ref={panelsDropdownRef}
+              >
                 <button
                   className={`studio-btn studio-btn-icon ${showSidebar || showInspector ? "studio-btn-active" : ""}`}
                   onClick={() => setShowPanels(!showPanels)}
@@ -1224,7 +1346,6 @@ const StudioEditorInner = ({
                   <span className="studio-split-label">Split</span>
                 </button>
               </div>
-
             </div>
 
             <div className="studio-toolbar-right">
@@ -1331,7 +1452,10 @@ const StudioEditorInner = ({
             {/* Left sidebar - Elements */}
             {showSidebar && (
               <div className="studio-sidebar">
-                <div className="studio-sidebar-header" onMouseDown={(e) => e.preventDefault()}>
+                <div
+                  className="studio-sidebar-header"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
                   <span className="studio-sidebar-title">Elements</span>
                   <button
                     className="studio-btn studio-btn-icon studio-btn-sm studio-mobile-only"
@@ -1348,24 +1472,76 @@ const StudioEditorInner = ({
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
                 <div className="studio-elements-list">
+                  {/* Custom section — only for component-based frameworks */}
+                  {hasComponents && (
+                    <div>
+                      <div
+                        className="studio-element-category studio-element-category-toggle"
+                        onClick={() => toggleCategory("Custom")}
+                      >
+                        <span
+                          className={`studio-category-chevron ${collapsedCategories.has("Custom") ? "" : "studio-category-chevron-open"}`}
+                        >
+                          &#9654;
+                        </span>
+                        <span>Custom</span>
+                        <span className="studio-category-count">
+                          {countComponentLeaves(customComponents)}
+                        </span>
+                      </div>
+                      {!collapsedCategories.has("Custom") && (
+                        <div className="studio-component-tree">
+                          {customComponents.length === 0 ? (
+                            <div className="studio-element-item studio-text-muted">
+                              No components found
+                            </div>
+                          ) : (
+                            <ComponentTree
+                              nodes={flattenComponentTree(customComponents)}
+                              collapsedState={[
+                                componentFolderCollapsed,
+                                toggleComponentFolder,
+                              ]}
+                            />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* HTML Element categories */}
                   {filteredCategories.map(([category, elements]) => (
                     <div key={category}>
-                      <div className="studio-element-category">{category}</div>
-                      {elements.map((el) => (
-                        <div
-                          className="studio-element-item"
-                          draggable
-                          key={el}
-                          onDragStart={(e) => {
-                            e.dataTransfer.setData(
-                              "text/plain",
-                              `<${el}></${el}>`,
-                            );
-                          }}
+                      <div
+                        className="studio-element-category studio-element-category-toggle"
+                        onClick={() => toggleCategory(category)}
+                      >
+                        <span
+                          className={`studio-category-chevron ${collapsedCategories.has(category) ? "" : "studio-category-chevron-open"}`}
                         >
-                          &lt;{el}&gt;
-                        </div>
-                      ))}
+                          &#9654;
+                        </span>
+                        <span>{category}</span>
+                        <span className="studio-category-count">
+                          {elements.length}
+                        </span>
+                      </div>
+                      {!collapsedCategories.has(category) &&
+                        elements.map((el) => (
+                          <div
+                            className="studio-element-item"
+                            draggable
+                            key={el}
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData(
+                                "text/plain",
+                                `<${el}></${el}>`,
+                              );
+                            }}
+                          >
+                            &lt;{el}&gt;
+                          </div>
+                        ))}
                     </div>
                   ))}
                 </div>
@@ -1406,7 +1582,10 @@ const StudioEditorInner = ({
             {/* Right sidebar - Inspector */}
             {showInspector && (
               <div className="studio-inspector">
-                <div className="studio-inspector-header" onMouseDown={(e) => e.preventDefault()}>
+                <div
+                  className="studio-inspector-header"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
                   <span className="studio-inspector-title">Inspector</span>
                   <button
                     className="studio-btn studio-btn-icon studio-btn-sm"

@@ -1935,3 +1935,74 @@ export const resolveLocalImports = async (filePath: string, depth = 0) => {
 
   return result;
 };
+
+// ── Component scanning ─────────────────────────────────────────
+
+export type ComponentTreeNode = {
+  name: string;
+  path: string;
+  children?: ComponentTreeNode[];
+};
+
+/**
+ * Scan a framework directory for component files (everything except pages/).
+ * Returns a tree structure preserving directory nesting.
+ */
+export const scanFrameworkComponents = async (
+  framework: StudioFramework,
+  directory: string,
+): Promise<ComponentTreeNode[]> => {
+  // HTML and HTMX don't have components
+  if (framework === "html" || framework === "htmx") return [];
+
+  const meta = getFrameworkMeta(framework);
+  const ext = meta.extension;
+
+  const absDir = resolve(directory);
+  if (!existsSync(absDir)) return [];
+
+  const buildTree = (dir: string, relBase: string): ComponentTreeNode[] => {
+    const nodes: ComponentTreeNode[] = [];
+    let entries: { name: string; isDirectory(): boolean }[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true }) as unknown as {
+        name: string;
+        isDirectory(): boolean;
+      }[];
+    } catch {
+      return nodes;
+    }
+
+    for (const entry of entries) {
+      const name = String(entry.name);
+      // Skip pages directory — those are pages, not components
+      if (name === "pages") continue;
+      // Skip node_modules, hidden dirs
+      if (name.startsWith(".") || name === "node_modules") continue;
+
+      const fullPath = join(dir, name);
+      const relPath = relBase ? `${relBase}/${name}` : name;
+
+      if (entry.isDirectory()) {
+        const children = buildTree(fullPath, relPath);
+        if (children.length > 0) {
+          nodes.push({ name, path: relPath, children });
+        }
+      } else if (name.endsWith(ext)) {
+        nodes.push({ name: name.replace(ext, ""), path: relPath });
+      }
+    }
+
+    // Sort: directories first, then files, alphabetically
+    nodes.sort((a, b) => {
+      const aDir = !!a.children;
+      const bDir = !!b.children;
+      if (aDir !== bDir) return aDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    return nodes;
+  };
+
+  return buildTree(absDir, "");
+};
