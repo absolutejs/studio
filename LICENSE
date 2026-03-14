@@ -1,0 +1,91 @@
+# Business Source License 1.1
+
+**Licensor:** Alex Kahn
+
+**Licensed Work:** Absolute Studio (https://github.com/absolutejs/studio)
+
+**Change Date:** February 16, 2036
+
+**Change License:** Apache License, Version 2.0
+
+---
+
+## Terms
+
+The Licensor hereby grants you the right to copy, modify, create derivative
+works, redistribute, and make non-production use of the Licensed Work. The
+Licensor may make an Additional Use Grant, permitting limited production use.
+
+### Additional Use Grant
+
+You may use the Licensed Work in production, provided your use does not include
+any of the following:
+
+1. **Offering a Website Builder Product or Service.** You may not offer the
+   Licensed Work, or any derivative of it, to third parties as a website
+   builder, app builder, site generator, or similar product or service —
+   whether hosted, self-hosted, SaaS, or distributed as a standalone
+   application — where users create, edit, or publish websites or web
+   applications. This includes, but is not limited to, any product or service
+   that is marketed, sold, or otherwise monetized as a tool for building
+   websites or web applications.
+
+2. **AI-Integrated Website Building.** You may not integrate, combine, or
+   bundle the Licensed Work (or any derivative of it) with artificial
+   intelligence, machine learning, large language models, or similar
+   technologies to create, offer, or distribute an AI-powered website builder,
+   code generation tool, or design-to-code service. This restriction applies
+   whether such AI capabilities are built into the Licensed Work, layered on
+   top of it, or offered as a separate service that interacts with or depends
+   on the Licensed Work.
+
+3. **Resale or Redistribution as a Standalone Product.** You may not sell,
+   license, or distribute the Licensed Work, or any derivative or fork of it,
+   as a standalone commercial product.
+
+4. **Removal of Attribution.** Any derivative work, fork, or redistribution of
+   the Licensed Work must prominently credit Absolute Studio and include a link
+   to the original project repository (https://github.com/absolutejs/studio).
+
+For clarity, the following uses are expressly permitted:
+
+- Using Absolute Studio internally to build and develop your own applications,
+  websites, or projects (whether commercial or non-commercial), as long as
+  Studio itself is not the product being offered.
+- Providing consulting, development, or professional services to clients where
+  you use Absolute Studio as a development tool, provided that Studio is not
+  exposed to or redistributed to clients as a product.
+- Forking and modifying the Licensed Work for your own internal use, provided
+  attribution is maintained.
+
+### Change Date and Change License
+
+On the Change Date specified above, or on such other date as the Licensor may
+specify by written notice, the Licensed Work will be made available under the
+Change License (Apache License, Version 2.0). Until the Change Date, the terms
+of this Business Source License 1.1 apply.
+
+### Notices
+
+You must not remove or obscure any licensing, copyright, or other notices
+included in the Licensed Work.
+
+### No Warranty
+
+THE LICENSED WORK IS PROVIDED "AS IS". THE LICENSOR HEREBY DISCLAIMS ALL
+WARRANTIES, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR
+IN CONNECTION WITH THE LICENSED WORK OR THE USE OR OTHER DEALINGS IN THE
+LICENSED WORK.
+
+---
+
+## Contact
+
+For commercial licensing inquiries or additional permissions, contact:
+
+- **Alex Kahn**
+- alexkahndev@gmail.com
+- https://alexkahndev.github.io
