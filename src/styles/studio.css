@@ -79,7 +79,7 @@
   padding: 0 16px;
   gap: 12px;
   flex-shrink: 0;
-  z-index: 100;
+  z-index: 300;
 }
 
 .studio-toolbar-left {
@@ -102,20 +102,85 @@
   gap: 8px;
 }
 
-.studio-logo {
-  font-weight: 700;
-  font-size: 13px;
-  letter-spacing: 2px;
-  color: var(--studio-mauve);
-  user-select: none;
-  text-transform: uppercase;
-}
 
 .studio-toolbar-divider {
   width: 1px;
   height: 24px;
   background: var(--studio-border);
   flex-shrink: 0;
+}
+
+.studio-mobile-only {
+  display: none !important;
+}
+
+/* ============================================================
+   Sidebar Header
+   ============================================================ */
+
+.studio-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--studio-border);
+  flex-shrink: 0;
+}
+
+.studio-sidebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--studio-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ============================================================
+   Panel Backdrop (mobile)
+   ============================================================ */
+
+.studio-panel-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 199;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================================
+   Panels Dropdown (mobile)
+   ============================================================ */
+
+.studio-panels-dropdown {
+  position: relative;
+}
+
+.studio-panels-dropdown .studio-dropdown-menu {
+  left: 0;
+  min-width: 160px;
+}
+
+.studio-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--studio-text);
+  font-size: 13px;
+  font-family: var(--studio-font);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s ease;
+}
+
+.studio-dropdown-item:hover {
+  background: var(--studio-surface-hover);
+}
+
+.studio-dropdown-item-active {
+  color: var(--studio-blue);
 }
 
 /* ============================================================
@@ -127,6 +192,8 @@
   color: var(--studio-text);
   border: none;
   padding: 6px 12px;
+  height: 32px;
+  box-sizing: border-box;
   border-radius: var(--studio-radius);
   cursor: pointer;
   font-size: 12px;
@@ -965,6 +1032,8 @@ input[type="number"].studio-inspector-value::-webkit-outer-spin-button {
   color: var(--studio-text);
   border: none;
   padding: 6px 12px;
+  height: 32px;
+  box-sizing: border-box;
   border-radius: var(--studio-radius);
   cursor: pointer;
   font-size: 12px;
@@ -1010,7 +1079,8 @@ input[type="number"].studio-inspector-value::-webkit-outer-spin-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 72px;
+  width: 80px;
+  flex-shrink: 0;
   padding: 4px 8px;
   font-size: 11px;
   font-weight: 600;
@@ -1058,9 +1128,12 @@ input[type="number"].studio-inspector-value::-webkit-outer-spin-button {
   background: var(--studio-surface);
   border-radius: var(--studio-radius);
   padding: 2px;
+  height: 32px;
+  box-sizing: border-box;
 }
 
 .studio-view-toggle .studio-btn {
+  height: 100%;
   background: transparent;
   border-radius: 4px;
 }
@@ -1935,22 +2008,9 @@ input[type="number"].studio-inspector-value::-webkit-outer-spin-button {
     display: none;
   }
 
-  .studio-inspect-label {
-    display: none;
-  }
-
-  .studio-panel-label {
-    display: none;
-  }
-
   .studio-toolbar {
     padding: 0 8px;
     gap: 6px;
-  }
-
-  .studio-logo {
-    font-size: 11px;
-    letter-spacing: 1px;
   }
 }
 
@@ -1959,10 +2019,6 @@ input[type="number"].studio-inspector-value::-webkit-outer-spin-button {
    ============================================================ */
 
 @media (max-width: 767px) {
-  .studio-logo {
-    display: none;
-  }
-
   .studio-split-btn {
     display: none;
   }
@@ -1981,29 +2037,74 @@ input[type="number"].studio-inspector-value::-webkit-outer-spin-button {
     display: none;
   }
 
-  /* Sidebar becomes overlay on mobile */
+  .studio-panel-label,
+  .studio-inspect-label {
+    display: none;
+  }
+
+  .studio-open-editor-btn {
+    display: none;
+  }
+
+  .studio-desktop-only {
+    display: none !important;
+  }
+
+  .studio-mobile-only {
+    display: flex !important;
+  }
+
+  .studio-panel-backdrop.studio-mobile-only {
+    display: block !important;
+  }
+
+  /* Sidebar becomes full-width overlay on mobile */
   .studio-sidebar {
     position: absolute;
     left: 0;
     top: 0;
+    width: 100%;
     height: 100%;
     z-index: 200;
-    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.4);
+    box-shadow: none;
   }
 
-  /* Inspector becomes overlay on mobile */
+  /* Inspector becomes full-width overlay on mobile */
   .studio-inspector {
     position: absolute;
     right: 0;
     top: 0;
+    width: 100%;
     height: 100%;
     z-index: 200;
-    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.4);
+    box-shadow: none;
   }
 
   .studio-content {
     position: relative;
   }
+
+  /* Constrain scripts dropdown on mobile */
+  .studio-scripts-menu {
+    position: fixed;
+    top: calc(var(--studio-toolbar-height) + 4px);
+    left: 8px;
+    right: 8px;
+    max-width: none;
+    min-width: 0;
+    width: auto;
+  }
+
+  .studio-script-item-info {
+    overflow: hidden;
+  }
+
+  .studio-script-item-desc {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
 }
 
 /* ============================================================

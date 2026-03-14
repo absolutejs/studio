@@ -202,6 +202,21 @@ const PanelRightIcon = () => (
   </svg>
 );
 
+const LayoutPanelsIcon = () => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.3"
+  >
+    <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+    <line x1="5.5" y1="2.5" x2="5.5" y2="13.5" />
+    <line x1="10.5" y1="2.5" x2="10.5" y2="13.5" />
+  </svg>
+);
+
 const SplitIcon = () => (
   <svg
     width="14"
@@ -232,6 +247,7 @@ const StudioEditorInner = ({
   const [selectedElement, setSelectedElement] =
     useState<SelectedElement | null>(null);
   const [showScripts, setShowScripts] = useState(false);
+  const [showPanels, setShowPanels] = useState(false);
   const [scriptOutput, setScriptOutput] = useState("");
   const [runningScript, setRunningScript] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -263,6 +279,9 @@ const StudioEditorInner = ({
   const mainRef = useRef<HTMLDivElement>(null);
   const scriptsDropdownRef = useRef<HTMLDivElement>(null);
   const pagesDropdownRef = useRef<HTMLDivElement>(null);
+  const panelsDropdownRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -279,9 +298,31 @@ const StudioEditorInner = ({
       ) {
         setShowPages(false);
       }
+      if (
+        panelsDropdownRef.current &&
+        !panelsDropdownRef.current.contains(e.target)
+      ) {
+        setShowPanels(false);
+      }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("mousedown", handler, true);
+    return () => document.removeEventListener("mousedown", handler, true);
+  }, []);
+
+  // Prevent toolbar/dropdown clicks from disrupting Monaco's clipboard
+  // service. Monaco listens for mousedown on <body> and cancels pending
+  // clipboard ops when focus leaves the editor. preventDefault() on
+  // mousedown stops the browser from moving focus, avoiding cancellation.
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const preventFocusSteal = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest("input, select, textarea")) return;
+      e.preventDefault();
+    };
+    el.addEventListener("mousedown", preventFocusSteal);
+    return () => el.removeEventListener("mousedown", preventFocusSteal);
   }, []);
 
   // --- Queries ---
@@ -966,18 +1007,72 @@ const StudioEditorInner = ({
           className={`studio-layout ${showPages || showScripts ? "studio-dropdown-open" : ""}`}
         >
           {/* Toolbar */}
-          <div className="studio-toolbar">
-            <div className="studio-logo">ABSOLUTE STUDIO</div>
-
+          <div className="studio-toolbar" ref={toolbarRef}>
             <div className="studio-toolbar-left">
+              {/* Desktop: individual panel button */}
               <button
-                className={`studio-btn ${showSidebar ? "studio-btn-active" : ""}`}
+                className={`studio-btn studio-desktop-only ${showSidebar ? "studio-btn-active" : ""}`}
                 onClick={() => setShowSidebar(!showSidebar)}
                 title="Toggle elements panel (Ctrl+B)"
               >
                 <PanelLeftIcon />
                 <span className="studio-panel-label">Elements</span>
               </button>
+
+              {/* Mobile: combined panels dropdown */}
+              <div className="studio-panels-dropdown studio-mobile-only" ref={panelsDropdownRef}>
+                <button
+                  className={`studio-btn studio-btn-icon ${showSidebar || showInspector ? "studio-btn-active" : ""}`}
+                  onClick={() => setShowPanels(!showPanels)}
+                  title="Toggle panels"
+                >
+                  <LayoutPanelsIcon />
+                </button>
+                {showPanels && (
+                  <div className="studio-dropdown-menu">
+                    <button
+                      className={`studio-dropdown-item ${showSidebar ? "studio-dropdown-item-active" : ""}`}
+                      onClick={() => {
+                        if (showSidebar) {
+                          setShowSidebar(false);
+                        } else {
+                          setShowSidebar(true);
+                          if (showInspector) handleCloseInspector();
+                        }
+                        setShowPanels(false);
+                      }}
+                    >
+                      <PanelLeftIcon />
+                      Elements
+                    </button>
+                    <button
+                      className={`studio-dropdown-item ${showInspector ? "studio-dropdown-item-active" : ""}`}
+                      onClick={() => {
+                        if (showInspector) {
+                          handleCloseInspector();
+                        } else {
+                          setShowInspector(true);
+                          setShowSidebar(false);
+                        }
+                        setShowPanels(false);
+                      }}
+                    >
+                      <PanelRightIcon />
+                      Inspector
+                    </button>
+                    <button
+                      className={`studio-dropdown-item ${showScripts ? "studio-dropdown-item-active" : ""}`}
+                      onClick={() => {
+                        setShowScripts(!showScripts);
+                        setShowPanels(false);
+                      }}
+                    >
+                      Scripts
+                      {runningScript && <span className="studio-spinner" />}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="studio-toolbar-center">
@@ -1130,8 +1225,9 @@ const StudioEditorInner = ({
                 </button>
               </div>
 
-              <div className="studio-toolbar-divider" />
+            </div>
 
+            <div className="studio-toolbar-right">
               {/* Inspect mode toggle */}
               <button
                 className={`studio-btn studio-inspect-btn ${inspectMode ? "studio-inspect-active" : ""}`}
@@ -1141,13 +1237,12 @@ const StudioEditorInner = ({
                 <CursorIcon />
                 <span className="studio-inspect-label">Select</span>
               </button>
-            </div>
 
-            <div className="studio-toolbar-right">
+              <div className="studio-toolbar-divider" />
               {/* Scripts dropdown */}
               <div className="studio-dropdown" ref={scriptsDropdownRef}>
                 <button
-                  className="studio-scripts-btn"
+                  className="studio-scripts-btn studio-desktop-only"
                   onClick={() => setShowScripts(!showScripts)}
                 >
                   Scripts
@@ -1196,7 +1291,7 @@ const StudioEditorInner = ({
 
               {/* Open in editor */}
               <button
-                className="studio-btn"
+                className="studio-btn studio-open-editor-btn"
                 disabled={!currentPage}
                 onClick={handleOpenEditor}
                 title="Open in editor"
@@ -1206,7 +1301,7 @@ const StudioEditorInner = ({
 
               {/* Inspector toggle */}
               <button
-                className={`studio-btn ${showInspector ? "studio-btn-active" : ""}`}
+                className={`studio-btn studio-desktop-only ${showInspector ? "studio-btn-active" : ""}`}
                 onClick={() =>
                   showInspector
                     ? handleCloseInspector()
@@ -1221,9 +1316,31 @@ const StudioEditorInner = ({
           </div>
 
           <div className="studio-content">
+            {/* Mobile backdrop for panel overlays */}
+            {(showSidebar || showInspector) && (
+              <div
+                className="studio-panel-backdrop studio-mobile-only"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  setShowSidebar(false);
+                  if (showInspector) handleCloseInspector();
+                }}
+              />
+            )}
+
             {/* Left sidebar - Elements */}
             {showSidebar && (
               <div className="studio-sidebar">
+                <div className="studio-sidebar-header" onMouseDown={(e) => e.preventDefault()}>
+                  <span className="studio-sidebar-title">Elements</span>
+                  <button
+                    className="studio-btn studio-btn-icon studio-btn-sm studio-mobile-only"
+                    onClick={() => setShowSidebar(false)}
+                    title="Close elements"
+                  >
+                    &times;
+                  </button>
+                </div>
                 <input
                   className="studio-search-input"
                   placeholder="Search elements..."
@@ -1289,7 +1406,7 @@ const StudioEditorInner = ({
             {/* Right sidebar - Inspector */}
             {showInspector && (
               <div className="studio-inspector">
-                <div className="studio-inspector-header">
+                <div className="studio-inspector-header" onMouseDown={(e) => e.preventDefault()}>
                   <span className="studio-inspector-title">Inspector</span>
                   <button
                     className="studio-btn studio-btn-icon studio-btn-sm"
