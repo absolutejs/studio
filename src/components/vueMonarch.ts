@@ -198,53 +198,6 @@ export const vueMonarchLanguage = {
         ["delimiter.html", "tag", { token: "delimiter.html", next: "@pop" }],
       ],
 
-      // Vue directives: v-if, v-for, v-bind, v-on, v-model, v-show, v-slot
-      [
-        /(v-[\w-]+)(=)(")/,
-        [
-          "meta.directive",
-          "delimiter",
-          { token: "string", next: "@directiveValue" },
-        ],
-      ],
-      [/v-[\w-]+/, "meta.directive"],
-
-      // Shorthand v-on: @event — @@ is Monarch escape for literal @
-      [
-        /(@@)([\w.-]+)(=)(")/,
-        [
-          "attribute.name",
-          "attribute.name",
-          "delimiter",
-          { token: "string", next: "@directiveValue" },
-        ],
-      ],
-      [/(@@)([\w.-]+)/, ["attribute.name", "attribute.name"]],
-
-      // Shorthand v-bind: :prop
-      [
-        /(:)([\w.-]+)(=)(")/,
-        [
-          "attribute.name",
-          "attribute.name",
-          "delimiter",
-          { token: "string", next: "@directiveValue" },
-        ],
-      ],
-      [/(:)([\w.-]+)/, ["attribute.name", "attribute.name"]],
-
-      // Shorthand v-slot: #slot
-      [
-        /(#)([\w.-]+)(=)(")/,
-        [
-          "attribute.name",
-          "attribute.name",
-          "delimiter",
-          { token: "string", next: "@directiveValue" },
-        ],
-      ],
-      [/(#)([\w.-]+)/, ["attribute.name", "attribute.name"]],
-
       // Vue interpolation {{ }}
       [/\{\{/, { token: "delimiter.bracket", next: "@vueExpression" }],
 
@@ -278,49 +231,23 @@ export const vueMonarchLanguage = {
 
     htmlTagInTemplate: [
       [/\s+/, ""],
-      // Vue directives
-      [
-        /(v-[\w-]+)(=)(")/,
-        [
-          "meta.directive",
-          "delimiter",
-          { token: "string", next: "@directiveValue" },
-        ],
-      ],
-      [/v-[\w-]+/, "meta.directive"],
+      // Vue directives — match name, transition to directiveAttr for = and value
+      [/v-[\w-]+/, { token: "meta.directive", next: "@directiveAttr" }],
       // @event shorthand
       [
-        /(@@)([\w.-]+)(=)(")/,
-        [
-          "attribute.name",
-          "attribute.name",
-          "delimiter",
-          { token: "string", next: "@directiveValue" },
-        ],
+        /(@@)([\w.-]+)/,
+        ["attribute.name", { token: "attribute.name", next: "@directiveAttr" }],
       ],
-      [/(@@)([\w.-]+)/, ["attribute.name", "attribute.name"]],
       // :prop shorthand
       [
-        /(:)([\w.-]+)(=)(")/,
-        [
-          "attribute.name",
-          "attribute.name",
-          "delimiter",
-          { token: "string", next: "@directiveValue" },
-        ],
+        /(:)([\w.-]+)/,
+        ["attribute.name", { token: "attribute.name", next: "@directiveAttr" }],
       ],
-      [/(:)([\w.-]+)/, ["attribute.name", "attribute.name"]],
       // #slot shorthand
       [
-        /(#)([\w.-]+)(=)(")/,
-        [
-          "attribute.name",
-          "attribute.name",
-          "delimiter",
-          { token: "string", next: "@directiveValue" },
-        ],
+        /(#)([\w.-]+)/,
+        ["attribute.name", { token: "attribute.name", next: "@directiveAttr" }],
       ],
-      [/(#)([\w.-]+)/, ["attribute.name", "attribute.name"]],
       // Standard attributes
       [
         /([\w-]+)(=)(")/,
@@ -342,8 +269,21 @@ export const vueMonarchLanguage = {
       [/\/?>/, { token: "delimiter.html", next: "@pop" }],
     ],
 
+    // After a directive name — handle optional ="value"
+    // Uses switchTo so directiveValue pops straight back to htmlTagInTemplate
+    directiveAttr: [
+      [/\s+/, ""],
+      [/=/, "delimiter"],
+      [/"/, { token: "delimiter", switchTo: "@directiveValue" }],
+      [/'/, { token: "delimiter", switchTo: "@directiveValueSingle" }],
+      // No value follows (e.g. bare v-show) — pop without consuming
+      [/(?=\S)/, "", "@pop"],
+    ],
+
     directiveValue: [
-      // Inside directive value quotes — JS expressions
+      // Closing quote
+      [/"/, { token: "delimiter", next: "@pop" }],
+      // Identifiers — check keywords/types
       [
         /[a-zA-Z_$][\w$]*/,
         {
@@ -356,8 +296,26 @@ export const vueMonarchLanguage = {
       ],
       [/@digits/, "number"],
       [/@symbols/, "operator"],
-      [/"/, { token: "string", next: "@pop" }],
-      [/[^"]+/, "variable"],
+      [/[^"a-zA-Z_$0-9=><!~?:&|+\-*\/\^%]+/, "variable"],
+    ],
+
+    directiveValueSingle: [
+      // Closing quote
+      [/'/, { token: "delimiter", next: "@pop" }],
+      // Identifiers — check keywords/types
+      [
+        /[a-zA-Z_$][\w$]*/,
+        {
+          cases: {
+            "@typeKeywords": "type",
+            "@keywords": "keyword",
+            "@default": "variable",
+          },
+        },
+      ],
+      [/@digits/, "number"],
+      [/@symbols/, "operator"],
+      [/[^'a-zA-Z_$0-9=><!~?:&|+\-*\/\^%]+/, "variable"],
     ],
 
     vueExpression: [
@@ -708,4 +666,4 @@ export const vueMonarchLanguage = {
       [/[\/*]/, "comment"],
     ],
   },
-} as const;
+};
