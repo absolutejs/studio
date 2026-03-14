@@ -261,6 +261,28 @@ const StudioEditorInner = ({
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
+  const scriptsDropdownRef = useRef<HTMLDivElement>(null);
+  const pagesDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (!(e.target instanceof Node)) return;
+      if (
+        scriptsDropdownRef.current &&
+        !scriptsDropdownRef.current.contains(e.target)
+      ) {
+        setShowScripts(false);
+      }
+      if (
+        pagesDropdownRef.current &&
+        !pagesDropdownRef.current.contains(e.target)
+      ) {
+        setShowPages(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   // --- Queries ---
   const { data: pages = [] } = useQuery({
@@ -828,16 +850,47 @@ const StudioEditorInner = ({
     })
     .filter(([, elements]) => elements.length > 0);
 
-  const groupedScripts = scripts.reduce<Record<string, ScriptInfo[]>>(
-    (acc, script) => {
-      if (!acc[script.category]) {
-        acc[script.category] = [];
-      }
-      acc[script.category]!.push(script);
-      return acc;
+  const HIDDEN_SCRIPTS = new Set(["dev", "start", "build"]);
+  const FEATURED_SCRIPTS: Record<
+    string,
+    { badge: string; gradient: string; description: string; order: number }
+  > = {
+    typecheck: {
+      badge: "Typecheck",
+      gradient: "linear-gradient(135deg, #3178c6, #60a5fa)",
+      description: "Run the TypeScript type checker",
+      order: 0,
     },
-    {},
-  );
+    format: {
+      badge: "Format",
+      gradient: "linear-gradient(135deg, #7c3aed, #a78bfa)",
+      description: "Auto-format source files",
+      order: 1,
+    },
+    lint: {
+      badge: "Lint",
+      gradient: "linear-gradient(135deg, #d97706, #fbbf24)",
+      description: "Check code for errors and warnings",
+      order: 2,
+    },
+    test: {
+      badge: "Test",
+      gradient: "linear-gradient(135deg, #059669, #34d399)",
+      description: "Run the test suite",
+      order: 3,
+    },
+  };
+
+  const filteredScripts = scripts
+    .filter((s) => !HIDDEN_SCRIPTS.has(s.name))
+    .sort((a, b) => {
+      const aFeatured = FEATURED_SCRIPTS[a.name];
+      const bFeatured = FEATURED_SCRIPTS[b.name];
+      if (aFeatured && bFeatured) return aFeatured.order - bFeatured.order;
+      if (aFeatured) return -1;
+      if (bFeatured) return 1;
+      return a.name.localeCompare(b.name);
+    });
 
   const previewVisible = layout === "preview" || layout === "split";
   const sourceVisible = layout === "source" || layout === "split";
@@ -909,7 +962,9 @@ const StudioEditorInner = ({
     <html lang="en">
       <StudioHead cssPath={cssPath} />
       <body className="studio-body">
-        <div className="studio-layout">
+        <div
+          className={`studio-layout ${showPages || showScripts ? "studio-dropdown-open" : ""}`}
+        >
           {/* Toolbar */}
           <div className="studio-toolbar">
             <div className="studio-logo">ABSOLUTE STUDIO</div>
@@ -927,7 +982,7 @@ const StudioEditorInner = ({
 
             <div className="studio-toolbar-center">
               {/* Pages dropdown */}
-              <div className="studio-pages-dropdown">
+              <div className="studio-pages-dropdown" ref={pagesDropdownRef}>
                 <button
                   className="studio-btn"
                   onClick={() => setShowPages(!showPages)}
@@ -1090,7 +1145,7 @@ const StudioEditorInner = ({
 
             <div className="studio-toolbar-right">
               {/* Scripts dropdown */}
-              <div className="studio-dropdown">
+              <div className="studio-dropdown" ref={scriptsDropdownRef}>
                 <button
                   className="studio-scripts-btn"
                   onClick={() => setShowScripts(!showScripts)}
@@ -1101,29 +1156,40 @@ const StudioEditorInner = ({
 
                 {showScripts && (
                   <div className="studio-dropdown-menu studio-scripts-menu">
-                    {Object.entries(groupedScripts).map(
-                      ([category, categoryScripts]) => (
-                        <div key={category}>
-                          <div className="studio-script-category">
-                            {category}
+                    {filteredScripts.map((script) => {
+                      const featured = FEATURED_SCRIPTS[script.name];
+                      return (
+                        <button
+                          className={`studio-script-item ${featured ? "studio-script-featured" : ""}`}
+                          key={script.name}
+                          onClick={() => {
+                            setShowScripts(false);
+                            handleRunScript(script.name);
+                          }}
+                        >
+                          <span
+                            className="studio-script-badge"
+                            style={{
+                              background: featured
+                                ? featured.gradient
+                                : "var(--studio-surface-hover)",
+                            }}
+                          >
+                            {featured ? featured.badge : script.name}
+                          </span>
+                          <div className="studio-script-item-info">
+                            {featured && (
+                              <span className="studio-script-item-desc">
+                                {featured.description}
+                              </span>
+                            )}
+                            <span className="studio-script-item-cmd">
+                              {script.command}
+                            </span>
                           </div>
-                          {categoryScripts.map((script) => (
-                            <button
-                              className="studio-page-item"
-                              key={script.name}
-                              onClick={() => handleRunScript(script.name)}
-                            >
-                              <span className="studio-page-name">
-                                {script.name}
-                              </span>
-                              <span className="studio-page-framework">
-                                {script.command}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      ),
-                    )}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
