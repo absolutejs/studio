@@ -45,6 +45,25 @@ type SelectedElement = {
     lineNumber: number | null;
     columnNumber: number | null;
   } | null;
+  inlineStyles?: Record<string, string> | null;
+  eventHandlers?: Record<string, { name: string; source: string }> | null;
+};
+
+type StyleData = {
+  matchedRules: {
+    selector: string;
+    properties: Record<string, string>;
+    source: string;
+  }[];
+  computedStyles: Record<string, string>;
+  availableClasses: { source: string; classes: string[] }[];
+  inlineStyles: Record<string, string>;
+} | null;
+
+type ComponentTreeNodeData = {
+  name: string;
+  props: Record<string, unknown>;
+  children: ComponentTreeNodeData[];
 };
 
 type ScriptInfo = {
@@ -641,6 +660,35 @@ const PanelLeftIcon = () => (
   </svg>
 );
 
+const PuzzleIcon = () => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.3"
+  >
+    <path d="M6.5 2.5h3v2a1.5 1.5 0 1 0 3 0v-2h1v4h-2a1.5 1.5 0 0 0 0 3h2v4h-3v-2a1.5 1.5 0 0 0-3 0v2h-3v-4h-2a1.5 1.5 0 0 1 0-3h2v-4z" />
+  </svg>
+);
+
+const ComponentTreeIcon = () => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.3"
+  >
+    <rect x="1" y="1" width="5" height="4" rx="1" />
+    <rect x="10" y="4" width="5" height="4" rx="1" />
+    <rect x="10" y="11" width="5" height="4" rx="1" />
+    <path d="M6 3h2v3.5a1 1 0 0 0 1 1h1M6 3h2v10a1 1 0 0 0 1 1h1" />
+  </svg>
+);
+
 const PanelRightIcon = () => (
   <svg
     width="14"
@@ -748,6 +796,104 @@ const ComponentTree = ({
   );
 };
 
+// ── Style editing helpers ──────────────────────────────────────────
+
+/** Convert CSS property name to camelCase for JSX: font-size → fontSize */
+function cssPropToCamel(prop: string): string {
+  return prop.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+/** Check if a CSS value should be written as a number (no quotes) in JSX */
+function needsNumericValue(property: string, value: string): boolean {
+  // Pure numbers for properties like opacity, flex-grow, z-index, order
+  const numericProps = [
+    "opacity",
+    "flex-grow",
+    "flex-shrink",
+    "z-index",
+    "order",
+    "font-weight",
+  ];
+  if (numericProps.includes(property) && /^\d+(\.\d+)?$/.test(value)) {
+    return true;
+  }
+  return false;
+}
+
+/** Parse JSX style body like `fontSize: '16px', color: 'red'` into entries */
+function parseJSXStyleBody(body: string): Record<string, string> {
+  const entries: Record<string, string> = {};
+  // Match patterns: key: 'value', key: "value", key: number
+  const pattern = /(\w+)\s*:\s*(?:'([^']*)'|"([^"]*)"|(\d[\d.]*\w*))/g;
+  let m;
+  while ((m = pattern.exec(body)) !== null) {
+    entries[m[1]!] = m[2] ?? m[3] ?? m[4]!;
+  }
+  return entries;
+}
+
+/** Build JSX style body string from entries */
+function buildJSXStyleBody(entries: Record<string, string>): string {
+  return Object.entries(entries)
+    .map(([k, v]) => {
+      if (/^\d+(\.\d+)?$/.test(v)) return `${k}: ${v}`;
+      return `${k}: '${v}'`;
+    })
+    .join(", ");
+}
+
+const ComponentTreeView = ({
+  node,
+  depth,
+}: {
+  node: ComponentTreeNodeData;
+  depth: number;
+}) => {
+  const [expanded, setExpanded] = useState(depth < 2);
+  const hasChildren = node.children && node.children.length > 0;
+  const propEntries = Object.entries(node.props);
+
+  return (
+    <div className="studio-ctree-node">
+      <div
+        className="studio-ctree-row"
+        style={{ paddingLeft: `${depth * 16 + 8}px` }}
+        onClick={() => setExpanded(!expanded)}
+      >
+        {hasChildren && (
+          <span className="studio-style-category-arrow">
+            {expanded ? "\u25BE" : "\u25B8"}
+          </span>
+        )}
+        <span className="studio-ctree-name">&lt;{node.name}&gt;</span>
+        {propEntries.length > 0 && (
+          <span className="studio-ctree-prop-count">
+            {propEntries.length} prop{propEntries.length !== 1 ? "s" : ""}
+          </span>
+        )}
+      </div>
+      {expanded && propEntries.length > 0 && (
+        <div
+          className="studio-ctree-props"
+          style={{ paddingLeft: `${depth * 16 + 28}px` }}
+        >
+          {propEntries.map(([k, v]) => (
+            <div key={k} className="studio-ctree-prop">
+              <span className="studio-ctree-prop-name">{k}</span>
+              <span className="studio-ctree-prop-value">{String(v)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {expanded &&
+        hasChildren &&
+        node.children.map((child, i) => (
+          <ComponentTreeView key={i} node={child} depth={depth + 1} />
+        ))}
+    </div>
+  );
+};
+
 const StudioEditorInner = ({
   devServerUrl = "http://localhost:3000",
   cssPath,
@@ -840,6 +986,12 @@ const StudioEditorInner = ({
       ) {
         setShowPanels(false);
       }
+      if (
+        integrationsDropdownRef.current &&
+        !integrationsDropdownRef.current.contains(e.target)
+      ) {
+        setShowIntegrations(false);
+      }
     };
     document.addEventListener("mousedown", handler, true);
     return () => document.removeEventListener("mousedown", handler, true);
@@ -897,6 +1049,14 @@ const StudioEditorInner = ({
     },
     staleTime: 60_000,
   });
+
+  const [styleData, setStyleData] = useState<StyleData>(null);
+  const [showIntegrations, setShowIntegrations] = useState(false);
+  const [componentTree, setComponentTree] = useState<ComponentTreeNodeData[]>(
+    [],
+  );
+  const [showComponentTree, setShowComponentTree] = useState(false);
+  const integrationsDropdownRef = useRef<HTMLDivElement>(null);
 
   const currentFramework = currentPage?.framework ?? "";
   const hasComponents =
@@ -1110,12 +1270,25 @@ const StudioEditorInner = ({
     }
   }, [inspectMode]);
 
-  // Listen for element selection from iframe
+  // Listen for messages from iframe
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
       if (e.data?.type === "__studio_select") {
         setSelectedElement(e.data.element);
         setShowInspector(true);
+        // Request style data from iframe
+        if (iframeRef.current?.contentWindow) {
+          iframeRef.current.contentWindow.postMessage(
+            { type: "__studio_get_styles" },
+            "*",
+          );
+        }
+      }
+      if (e.data?.type === "__studio_styles_result") {
+        setStyleData(e.data.data);
+      }
+      if (e.data?.type === "__studio_component_tree_result") {
+        setComponentTree(e.data.data ?? []);
       }
     };
     window.addEventListener("message", handleMessage);
@@ -1379,6 +1552,496 @@ const StudioEditorInner = ({
       });
     },
     [selectedElement, editSource],
+  );
+
+  const handleAddAttribute = useCallback(
+    (name: string, value: string) => {
+      editSource((content) => {
+        // Find the element's opening tag using source location or tag matching
+        const tag = selectedElement?.tagName?.toLowerCase();
+        if (!tag) return null;
+
+        // Build a pattern to find the opening tag
+        // Look for <tagName with possible attributes, ending with > or />
+        const tagPattern = new RegExp(`(<${tag}\\b[^>]*?)(\\/?>)`);
+        const match = content.match(tagPattern);
+        if (!match) return null;
+
+        // Insert the new attribute before the closing > or />
+        const attrStr = value ? `${name}="${value}"` : `${name}`;
+        const insertion = ` ${attrStr}`;
+        return (
+          content.slice(0, match.index! + match[1]!.length) +
+          insertion +
+          content.slice(match.index! + match[1]!.length)
+        );
+      });
+
+      // Update iframe DOM
+      const iframe = document.querySelector(
+        ".studio-preview-frame",
+      ) as HTMLIFrameElement | null;
+      iframe?.contentWindow?.postMessage(
+        { type: "__studio_add_attr", name, value },
+        "*",
+      );
+    },
+    [selectedElement, editSource],
+  );
+
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshStyleData = useCallback(() => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => {
+      if (iframeRef.current?.contentWindow) {
+        iframeRef.current.contentWindow.postMessage(
+          { type: "__studio_get_styles" },
+          "*",
+        );
+      }
+    }, 200);
+  }, []);
+
+  // Detect whether the source file uses JSX style objects vs HTML style strings
+  const isJSXFramework =
+    currentPage?.framework === "react" || currentPage?.framework === "svelte";
+
+  /**
+   * Find the opening tag for the selected element in source, using
+   * sourceLocation.lineNumber to pick the right one when multiple
+   * tags of the same type exist.
+   */
+  const findElementTag = useCallback(
+    (
+      content: string,
+      tag: string,
+    ): { start: number; end: number; full: string; before: string } | null => {
+      const line = selectedElement?.sourceLocation?.lineNumber;
+      const tagPattern = new RegExp(`(<${tag}\\b[^>]*?)(\\/?>)`, "g");
+      let best: RegExpExecArray | null = null;
+
+      if (line && line > 0) {
+        // Find the match closest to the source line
+        const lines = content.split("\n");
+        // Convert lineNumber (1-based) to character offset
+        let charOffset = 0;
+        for (let i = 0; i < Math.min(line - 1, lines.length); i++) {
+          charOffset += lines[i]!.length + 1;
+        }
+
+        let m: RegExpExecArray | null;
+        let bestDist = Infinity;
+        while ((m = tagPattern.exec(content)) !== null) {
+          const dist = Math.abs(m.index - charOffset);
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = m;
+          }
+        }
+      } else {
+        // Fallback: first match
+        best = tagPattern.exec(content);
+      }
+
+      if (!best) return null;
+      return {
+        start: best.index,
+        end: best.index + best[0].length,
+        full: best[0],
+        before: best[1]!,
+      };
+    },
+    [selectedElement],
+  );
+
+  /**
+   * Find a style attribute pattern near the selected element's source
+   * line, not just the first one in the file.
+   */
+  const findStyleAttr = useCallback(
+    (content: string, pattern: RegExp): RegExpExecArray | null => {
+      const line = selectedElement?.sourceLocation?.lineNumber;
+      const global = new RegExp(pattern.source, "g");
+      let best: RegExpExecArray | null = null;
+
+      if (line && line > 0) {
+        const lines = content.split("\n");
+        let charOffset = 0;
+        for (let i = 0; i < Math.min(line - 1, lines.length); i++) {
+          charOffset += lines[i]!.length + 1;
+        }
+
+        let m: RegExpExecArray | null;
+        let bestDist = Infinity;
+        while ((m = global.exec(content)) !== null) {
+          const dist = Math.abs(m.index - charOffset);
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = m;
+          }
+        }
+      } else {
+        best = global.exec(content);
+      }
+
+      return best;
+    },
+    [selectedElement],
+  );
+
+  const handleStyleChange = useCallback(
+    (property: string, value: string) => {
+      editSource((content) => {
+        const tag = selectedElement?.tagName?.toLowerCase();
+        if (!tag) return null;
+
+        if (isJSXFramework) {
+          const camelProp = cssPropToCamel(property);
+          const jsxMatch = findStyleAttr(
+            content,
+            /style\s*=\s*\{\{([^}]*)\}\}/,
+          );
+          if (jsxMatch) {
+            const entries = parseJSXStyleBody(jsxMatch[1]!);
+            entries[camelProp] = value;
+            const newBody = buildJSXStyleBody(entries);
+            return (
+              content.slice(0, jsxMatch.index) +
+              `style={{ ${newBody} }}` +
+              content.slice(jsxMatch.index! + jsxMatch[0].length)
+            );
+          }
+
+          const tagInfo = findElementTag(content, tag);
+          if (!tagInfo) return null;
+          const quotedVal = needsNumericValue(property, value)
+            ? value
+            : `'${value}'`;
+          return (
+            content.slice(0, tagInfo.start + tagInfo.before.length) +
+            ` style={{ ${camelProp}: ${quotedVal} }}` +
+            content.slice(tagInfo.start + tagInfo.before.length)
+          );
+        }
+
+        // HTML
+        const styleMatch = findStyleAttr(content, /style\s*=\s*"([^"]*)"/);
+        if (styleMatch) {
+          const styles: Record<string, string> = {};
+          for (const part of styleMatch[1]!.split(";")) {
+            const colon = part.indexOf(":");
+            if (colon === -1) continue;
+            const p = part.slice(0, colon).trim();
+            const v = part.slice(colon + 1).trim();
+            if (p) styles[p] = v;
+          }
+          styles[property] = value;
+          const newStyle = Object.entries(styles)
+            .map(([p, v]) => `${p}: ${v}`)
+            .join("; ");
+          return (
+            content.slice(0, styleMatch.index) +
+            `style="${newStyle}"` +
+            content.slice(styleMatch.index! + styleMatch[0].length)
+          );
+        }
+
+        const tagInfo = findElementTag(content, tag);
+        if (!tagInfo) return null;
+        return (
+          content.slice(0, tagInfo.start + tagInfo.before.length) +
+          ` style="${property}: ${value}"` +
+          content.slice(tagInfo.start + tagInfo.before.length)
+        );
+      });
+
+      const iframe = document.querySelector(
+        ".studio-preview-frame",
+      ) as HTMLIFrameElement | null;
+      iframe?.contentWindow?.postMessage(
+        { type: "__studio_update_style", property, value },
+        "*",
+      );
+      refreshStyleData();
+    },
+    [
+      selectedElement,
+      editSource,
+      refreshStyleData,
+      isJSXFramework,
+      findElementTag,
+      findStyleAttr,
+    ],
+  );
+
+  const handleStyleRemove = useCallback(
+    (property: string) => {
+      editSource((content) => {
+        if (isJSXFramework) {
+          const camelProp = cssPropToCamel(property);
+          const jsxMatch = findStyleAttr(
+            content,
+            /style\s*=\s*\{\{([^}]*)\}\}/,
+          );
+          if (!jsxMatch) return null;
+
+          const entries = parseJSXStyleBody(jsxMatch[1]!);
+          delete entries[camelProp];
+
+          if (Object.keys(entries).length === 0) {
+            // Remove the style attr, including a leading space if present
+            const removeStart =
+              jsxMatch.index! > 0 && content[jsxMatch.index! - 1] === " "
+                ? jsxMatch.index! - 1
+                : jsxMatch.index!;
+            return (
+              content.slice(0, removeStart) +
+              content.slice(jsxMatch.index! + jsxMatch[0].length)
+            );
+          }
+
+          const newBody = buildJSXStyleBody(entries);
+          return (
+            content.slice(0, jsxMatch.index) +
+            `style={{ ${newBody} }}` +
+            content.slice(jsxMatch.index! + jsxMatch[0].length)
+          );
+        }
+
+        // HTML
+        const styleMatch = findStyleAttr(content, /style\s*=\s*"([^"]*)"/);
+        if (!styleMatch) return null;
+
+        const styles: Record<string, string> = {};
+        for (const part of styleMatch[1]!.split(";")) {
+          const colon = part.indexOf(":");
+          if (colon === -1) continue;
+          const p = part.slice(0, colon).trim();
+          const v = part.slice(colon + 1).trim();
+          if (p && p !== property) styles[p] = v;
+        }
+
+        if (Object.keys(styles).length === 0) {
+          const removeStart =
+            styleMatch.index! > 0 && content[styleMatch.index! - 1] === " "
+              ? styleMatch.index! - 1
+              : styleMatch.index!;
+          return (
+            content.slice(0, removeStart) +
+            content.slice(styleMatch.index! + styleMatch[0].length)
+          );
+        }
+
+        const newStyle = Object.entries(styles)
+          .map(([p, v]) => `${p}: ${v}`)
+          .join("; ");
+        return (
+          content.slice(0, styleMatch.index) +
+          `style="${newStyle}"` +
+          content.slice(styleMatch.index! + styleMatch[0].length)
+        );
+      });
+
+      const iframe = document.querySelector(
+        ".studio-preview-frame",
+      ) as HTMLIFrameElement | null;
+      iframe?.contentWindow?.postMessage(
+        { type: "__studio_remove_style", property },
+        "*",
+      );
+      refreshStyleData();
+    },
+    [
+      selectedElement,
+      editSource,
+      refreshStyleData,
+      isJSXFramework,
+      findStyleAttr,
+    ],
+  );
+
+  // React uses className, everything else uses class
+  const classAttrName = isJSXFramework ? "className" : "class";
+
+  const handleClassAdd = useCallback(
+    (className: string) => {
+      editSource((content) => {
+        const classMatch = findStyleAttr(
+          content,
+          new RegExp(`${classAttrName}\\s*=\\s*"([^"]*)"`),
+        );
+        if (classMatch) {
+          const existing = classMatch[1]!.trim();
+          const newVal = existing ? `${existing} ${className}` : className;
+          return (
+            content.slice(0, classMatch.index) +
+            `${classAttrName}="${newVal}"` +
+            content.slice(classMatch.index! + classMatch[0].length)
+          );
+        }
+
+        // No class attribute - add one
+        const tag = selectedElement?.tagName?.toLowerCase();
+        if (!tag) return null;
+        const tagInfo = findElementTag(content, tag);
+        if (!tagInfo) return null;
+        return (
+          content.slice(0, tagInfo.start + tagInfo.before.length) +
+          ` ${classAttrName}="${className}"` +
+          content.slice(tagInfo.start + tagInfo.before.length)
+        );
+      });
+
+      const iframe = document.querySelector(
+        ".studio-preview-frame",
+      ) as HTMLIFrameElement | null;
+      iframe?.contentWindow?.postMessage(
+        { type: "__studio_add_class", className },
+        "*",
+      );
+      refreshStyleData();
+    },
+    [
+      selectedElement,
+      editSource,
+      refreshStyleData,
+      classAttrName,
+      findStyleAttr,
+      findElementTag,
+    ],
+  );
+
+  const handleClassRemove = useCallback(
+    (className: string) => {
+      editSource((content) => {
+        const classMatch = findStyleAttr(
+          content,
+          new RegExp(`${classAttrName}\\s*=\\s*"([^"]*)"`),
+        );
+        if (!classMatch) return null;
+
+        const classes = classMatch[1]!
+          .trim()
+          .split(/\s+/)
+          .filter((c) => c !== className);
+
+        if (classes.length === 0) {
+          // Remove the entire class attribute, including leading space
+          const removeStart =
+            classMatch.index! > 0 && content[classMatch.index! - 1] === " "
+              ? classMatch.index! - 1
+              : classMatch.index!;
+          return (
+            content.slice(0, removeStart) +
+            content.slice(classMatch.index! + classMatch[0].length)
+          );
+        }
+
+        return (
+          content.slice(0, classMatch.index) +
+          `${classAttrName}="${classes.join(" ")}"` +
+          content.slice(classMatch.index! + classMatch[0].length)
+        );
+      });
+
+      const iframe = document.querySelector(
+        ".studio-preview-frame",
+      ) as HTMLIFrameElement | null;
+      iframe?.contentWindow?.postMessage(
+        { type: "__studio_remove_class", className },
+        "*",
+      );
+      refreshStyleData();
+    },
+    [
+      selectedElement,
+      editSource,
+      refreshStyleData,
+      classAttrName,
+      findStyleAttr,
+    ],
+  );
+
+  const handleInteractionAdd = useCallback(
+    (event: string, _action: string, code: string) => {
+      editSource((content) => {
+        const tag = selectedElement?.tagName?.toLowerCase();
+        if (!tag) return null;
+        const tagInfo = findElementTag(content, tag);
+        if (!tagInfo) return null;
+
+        if (isJSXFramework) {
+          // Insert JSX prop: onClick={() => { ... }}
+          return (
+            content.slice(0, tagInfo.start + tagInfo.before.length) +
+            ` ${event}={${code}}` +
+            content.slice(tagInfo.start + tagInfo.before.length)
+          );
+        }
+
+        // HTML: onclick="..."
+        return (
+          content.slice(0, tagInfo.start + tagInfo.before.length) +
+          ` ${event}="${code}"` +
+          content.slice(tagInfo.start + tagInfo.before.length)
+        );
+      });
+
+      // Refresh iframe
+      const iframe = document.querySelector(
+        ".studio-preview-frame",
+      ) as HTMLIFrameElement | null;
+      if (iframe) {
+        // For HTML onclick attrs, update the DOM directly
+        if (!isJSXFramework) {
+          iframe.contentWindow?.postMessage(
+            { type: "__studio_add_attr", name: event, value: code },
+            "*",
+          );
+        }
+      }
+    },
+    [selectedElement, editSource, isJSXFramework, findElementTag],
+  );
+
+  const handleInteractionRemove = useCallback(
+    (event: string) => {
+      editSource((content) => {
+        if (isJSXFramework) {
+          // Remove JSX prop: onClick={...}
+          // Match onClick={...} accounting for nested braces
+          const propPattern = new RegExp(`\\s*${event}=\\{`);
+          const propMatch = findStyleAttr(content, propPattern);
+          if (!propMatch) return null;
+
+          // Find matching closing brace
+          let depth = 0;
+          let i = propMatch.index! + propMatch[0].length;
+          for (; i < content.length; i++) {
+            if (content[i] === "{") depth++;
+            else if (content[i] === "}") {
+              if (depth === 0) {
+                i++;
+                break;
+              }
+              depth--;
+            }
+          }
+
+          return content.slice(0, propMatch.index) + content.slice(i);
+        }
+
+        // HTML: remove onclick="..."
+        const attrPattern = new RegExp(`\\s*${event}="[^"]*"`);
+        const attrMatch = findStyleAttr(content, attrPattern);
+        if (!attrMatch) return null;
+        return (
+          content.slice(0, attrMatch.index) +
+          content.slice(attrMatch.index! + attrMatch[0].length)
+        );
+      });
+    },
+    [selectedElement, editSource, isJSXFramework, findStyleAttr],
   );
 
   const handleOpenEditor = useCallback(async () => {
@@ -1965,6 +2628,39 @@ const StudioEditorInner = ({
                 )}
               </div>
 
+              {/* Integrations dropdown */}
+              <div className="studio-dropdown" ref={integrationsDropdownRef}>
+                <button
+                  className="studio-btn studio-desktop-only"
+                  onClick={() => setShowIntegrations(!showIntegrations)}
+                  title="Integrations"
+                >
+                  <PuzzleIcon />
+                  <span style={{ marginLeft: 4 }}>Tools</span>
+                </button>
+
+                {showIntegrations && (
+                  <div className="studio-dropdown-menu studio-integrations-menu">
+                    <button
+                      className="studio-script-item"
+                      onClick={() => {
+                        setShowIntegrations(false);
+                        setShowComponentTree(true);
+                        if (iframeRef.current?.contentWindow) {
+                          iframeRef.current.contentWindow.postMessage(
+                            { type: "__studio_get_component_tree" },
+                            "*",
+                          );
+                        }
+                      }}
+                    >
+                      <ComponentTreeIcon />
+                      <span style={{ marginLeft: 8 }}>Component Tree</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
               {/* Open in editor */}
               <button
                 className="studio-btn studio-open-editor-btn"
@@ -2212,12 +2908,63 @@ const StudioEditorInner = ({
                 <ElementPanel
                   selectedElement={selectedElement}
                   onAttributeChange={handleAttributeChange}
+                  onAddAttribute={handleAddAttribute}
                   onTextChange={handleTextChange}
+                  onStyleChange={handleStyleChange}
+                  onStyleRemove={handleStyleRemove}
+                  onClassAdd={handleClassAdd}
+                  onClassRemove={handleClassRemove}
+                  onInteractionAdd={handleInteractionAdd}
+                  onInteractionRemove={handleInteractionRemove}
                   assets={assetsData}
+                  styleData={styleData}
+                  isJSX={isJSXFramework}
                 />
               </div>
             )}
           </div>
+
+          {/* Component Tree panel */}
+          {showComponentTree && (
+            <div className="studio-component-tree-panel">
+              <div className="studio-inspector-header">
+                <span className="studio-inspector-title">Component Tree</span>
+                <button
+                  className="studio-btn studio-btn-icon studio-btn-sm"
+                  onClick={() => {
+                    // Refresh
+                    if (iframeRef.current?.contentWindow) {
+                      iframeRef.current.contentWindow.postMessage(
+                        { type: "__studio_get_component_tree" },
+                        "*",
+                      );
+                    }
+                  }}
+                  title="Refresh"
+                >
+                  &#x21bb;
+                </button>
+                <button
+                  className="studio-btn studio-btn-icon studio-btn-sm"
+                  onClick={() => setShowComponentTree(false)}
+                  title="Close"
+                >
+                  &times;
+                </button>
+              </div>
+              <div className="studio-component-tree-body">
+                {componentTree.length > 0 ? (
+                  componentTree.map((node, i) => (
+                    <ComponentTreeView key={i} node={node} depth={0} />
+                  ))
+                ) : (
+                  <div className="studio-inspector-empty-text">
+                    No React components detected
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Bottom panel - Script output */}
           {scriptOutput && (

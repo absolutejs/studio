@@ -22,7 +22,6 @@ import {
 } from "./project";
 import type { StudioFramework } from "../types/studio";
 import { openInEditor } from "./openEditor";
-import { iframeOverlayScript } from "./components/iframeOverlay";
 import type { StudioScriptInfo, StudioScriptRunResult } from "../types/studio";
 
 type StudioConfig = {
@@ -149,7 +148,29 @@ export const startStudio = async (config: StudioConfig = {}) => {
 
   const { absolutejs, manifest } = await prepare();
 
+  // Pre-read the built iframe scripts — these are served to the preview
+  // iframe via <script src> tags and must be registered before the static
+  // plugin's catch-all GET /* route.
+  const buildDir = join(import.meta.dir, "..", "build");
+  const overlayPath = asset(manifest, "StudioOverlay");
+  const wsRedirectPath = asset(manifest, "StudioWsRedirect");
+
+  const overlayScript = await Bun.file(join(buildDir, overlayPath)).text();
+  const wsRedirectScript = await Bun.file(
+    join(buildDir, wsRedirectPath),
+  ).text();
+
+  const jsHeaders = {
+    "Content-Type": "application/javascript",
+    "Cache-Control": "public, max-age=31536000, immutable",
+  };
+
   const app = new Elysia()
+    .get(overlayPath, () => new Response(overlayScript, { headers: jsHeaders }))
+    .get(
+      wsRedirectPath,
+      () => new Response(wsRedirectScript, { headers: jsHeaders }),
+    )
     .use(absolutejs)
 
     // Studio UI — served as an absolutejs React page
@@ -205,28 +226,23 @@ export const startStudio = async (config: StudioConfig = {}) => {
         );
       }
 
-      // Redirect WebSocket connections (HMR) to the dev server.
-      // IMPORTANT: This MUST be injected before any other scripts
-      // (especially the HMR client) so window.WebSocket is replaced
-      // before the HMR client tries to connect.
+      // Inject preview iframe scripts via <script src> tags.
+      // wsRedirect MUST run before any other scripts (especially the HMR
+      // client) so WebSocket is replaced before HMR tries to connect.
       const devHost = new URL(devServerUrl).host;
-      const wsRedirect = `<script>(function(){var d='${devHost}',h=location.host,O=WebSocket;window.WebSocket=function(u,p){if(typeof u==='string')u=u.replace(h,d);return p!==void 0?new O(u,p):new O(u)};window.WebSocket.prototype=O.prototype;window.WebSocket.CONNECTING=0;window.WebSocket.OPEN=1;window.WebSocket.CLOSING=2;window.WebSocket.CLOSED=3})()</script>`;
-
-      const overlayTag = `<script>${iframeOverlayScript}<\/script>`;
+      const wsTag = `<script src="${wsRedirectPath}" data-dev-host="${devHost}"><\/script>`;
+      const overlayTag = `<script src="${overlayPath}"><\/script>`;
 
       let modified = html;
-      // Inject wsRedirect at the start of <head> so it runs before the HMR client
       if (modified.includes("<head>")) {
-        modified = modified.replace("<head>", `<head>\n${wsRedirect}`);
+        modified = modified.replace("<head>", `<head>${wsTag}`);
       } else if (modified.includes("<head ")) {
-        modified = modified.replace(/<head([^>]*)>/, `<head$1>\n${wsRedirect}`);
+        modified = modified.replace(/<head([^>]*)>/, `<head$1>${wsTag}`);
       } else {
-        // Fallback: prepend to the entire HTML
-        modified = wsRedirect + modified;
+        modified = wsTag + modified;
       }
-      // Inject overlay script at the end of body (order doesn't matter for this one)
       if (modified.includes("</body>")) {
-        modified = modified.replace("</body>", `${overlayTag}\n</body>`);
+        modified = modified.replace("</body>", `${overlayTag}</body>`);
       } else {
         modified += overlayTag;
       }
