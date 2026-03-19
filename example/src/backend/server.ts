@@ -12,7 +12,6 @@ import SvelteExample from '../frontend/svelte/pages/SvelteExample.svelte';
 import { handleVuePageRequest } from '@absolutejs/absolute/vue';
 import { generateHeadElement } from '@absolutejs/absolute';
 import { vueImports } from './utils/vueImporter';
-
 const { absolutejs, manifest } = await prepare();
 
 const server = new Elysia()

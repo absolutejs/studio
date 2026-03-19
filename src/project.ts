@@ -278,6 +278,18 @@ export const createPageFile = async (
   // Generate a new page from the framework template
   await Bun.write(filePath, meta.pageTemplate(name));
 
+  // Write HTML template file for frameworks that use external templateUrl.
+  // Written after the page file so the template always matches the generated
+  // page code (overwriting any file copied from the scaffold template).
+  if (meta.htmlTemplate) {
+    const templatesDir = join(directory, "templates");
+    mkdirSync(templatesDir, { recursive: true });
+    await Bun.write(
+      join(templatesDir, `${toKebab(name)}.html`),
+      meta.htmlTemplate(name),
+    );
+  }
+
   return filePath;
 };
 
@@ -1657,6 +1669,14 @@ export const deletePage = async (
         const cssPath = join(stylesDirectory, `${toKebab(pageName)}.css`);
         if (existsSync(cssPath)) unlinkSync(cssPath);
       }
+
+      // Remove the page's HTML template file (Angular uses external templateUrl)
+      const htmlTemplatePath = join(
+        frameworkDir,
+        "templates",
+        `${toKebab(pageName)}.html`,
+      );
+      if (existsSync(htmlTemplatePath)) unlinkSync(htmlTemplatePath);
 
       // Remove build artifacts for HTML/HTMX pages (they're copied as-is,
       // not hashed, so the build system's stale output cleanup won't catch them)

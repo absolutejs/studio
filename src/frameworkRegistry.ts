@@ -29,6 +29,8 @@ export type FrameworkMeta = {
   pageTemplate: (name: string) => string;
   /** CSS template for the shared styles directory (React/Svelte) */
   cssTemplate?: (name: string) => string;
+  /** HTML template file content for frameworks that use external templateUrl (Angular) */
+  htmlTemplate?: (name: string) => string;
   /** Whether the framework handles CSS inline (e.g. Vue <style>, Svelte css:'injected').
    *  When true, Studio won't create a standalone CSS file in stylesConfig. */
   usesInlineCSS?: boolean;
@@ -880,58 +882,209 @@ header details nav a { font-size: 1.1rem; padding: 0.25rem 0; white-space: nowra
 \t\t\tasset(manifest, '${name}'),
 \t\t\tasset(manifest, '${name}Index'),
 \t\t\tgenerateHeadElement({
+\t\t\t\tcssPath: asset(manifest, '${name}CSS'),
 \t\t\t\ttitle: '${name}'
 \t\t\t})
 \t\t)
 \t)`;
     },
-    pageTemplate: (name) => `import { Component } from '@angular/core'
+    pageTemplate: (name) => {
+      const fileName = name.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();
+      return `import { Component } from '@angular/core'
 import { CommonModule } from '@angular/common'
 
 @Component({
 \tselector: 'page-${name.toLowerCase()}',
 \tstandalone: true,
 \timports: [CommonModule],
-\ttemplate: \`
-\t\t<main>
-\t\t\t<nav>
-\t\t\t\t<a href="https://absolutejs.com" target="_blank">
-\t\t\t\t\t<img class="logo" src="/assets/png/absolutejs-temp.png" alt="AbsoluteJS Logo" />
-\t\t\t\t</a>
-\t\t\t\t<a href="https://angular.io" target="_blank">
-\t\t\t\t\t<img class="logo angular" src="/assets/svg/angular-logo.svg" alt="Angular Logo" />
-\t\t\t\t</a>
-\t\t\t</nav>
-\t\t\t<h1>AbsoluteJS + Angular</h1>
-\t\t\t<button (click)="increment()">count is {{ count }}</button>
-\t\t\t<p>Edit <code>src/frontend/angular/pages/${name.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase()}.ts</code> and save to test HMR.</p>
-\t\t\t<p style="margin-top: 2rem">Explore the other pages to see multiple frameworks running together.</p>
-\t\t\t<p style="color: #777; font-size: 1rem; margin-top: 2rem">Click on the AbsoluteJS and Angular logos to learn more.</p>
-\t\t</main>
-\t\`,
-\tstyles: [\`
-\t\t:host { display: block; }
-\t\tmain { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; text-align: center; }
-\t\tnav { display: flex; gap: 4rem; justify-content: center; }
-\t\t.logo { height: 8rem; width: 8rem; will-change: filter; transition: filter 300ms; }
-\t\t.logo:hover { filter: drop-shadow(0 0 2rem #5fbeeb); }
-\t\t.logo.angular:hover { filter: drop-shadow(0 0 2rem #dd0031); }
-\t\th1 { font-size: 2.5rem; margin-top: 2rem; }
-\t\tbutton { background-color: #1a1a1a; border: 1px solid transparent; border-radius: 0.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); cursor: pointer; font-family: inherit; font-size: 1.1rem; font-weight: 500; margin: 2rem 0; padding: 0.6rem 1.2rem; transition: border-color 0.25s; }
-\t\tbutton:hover { border-color: #dd0031; }
-\t\tp { font-size: 1.2rem; max-width: 1280px; }
-\t\tcode { background-color: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); border-radius: 0.375rem; font-family: 'SF Mono', SFMono-Regular, Consolas, monospace; font-size: 0.875em; padding: 0.2rem 0.5rem; }
-\t\`]
+\ttemplateUrl: '../templates/${fileName}.html'
 })
-export class ${name}Component {
+export default class ${name}Component {
+\tisOpen = false
 \tcount = 0
 \tincrement() { this.count++ }
 }
+`;
+    },
+    cssTemplate: (name) => {
+      const selector = `page-${name.toLowerCase()}`;
+      return `@import url('./reset.css');
 
-export default function ${name}Page() {
-\treturn ${name}Component
+${selector} {
+\tdisplay: flex;
+\tflex: 1;
+\tflex-direction: column;
 }
-`,
+
+header {
+\talign-items: center;
+\tbackground-color: #1a1a1a;
+\tbox-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+\tdisplay: flex;
+\tjustify-content: space-between;
+\tpadding: 2rem;
+\ttext-align: center;
+}
+
+header a {
+\tposition: relative;
+\tcolor: #5fbeeb;
+\ttext-decoration: none;
+}
+
+header a::after {
+\tcontent: '';
+\tposition: absolute;
+\tleft: 0;
+\tbottom: 0;
+\twidth: 100%;
+\theight: 2px;
+\tbackground: linear-gradient(90deg, #5fbeeb 0%, #35d5a2 50%, #ff4b91 100%);
+\ttransform: scaleX(0);
+\ttransform-origin: left;
+\ttransition: transform 0.25s ease-in-out;
+}
+
+header a:hover::after {
+\ttransform: scaleX(1);
+}
+
+h1 {
+\tfont-size: 2.5rem;
+\tmargin-top: 2rem;
+}
+
+.logo {
+\theight: 8rem;
+\twidth: 8rem;
+\twill-change: filter;
+\ttransition: filter 300ms;
+}
+
+.logo:hover {
+\tfilter: drop-shadow(0 0 2rem #5fbeeb);
+}
+
+.logo.angular:hover {
+\tfilter: drop-shadow(0 0 2rem #dd0031);
+}
+
+button:hover {
+\tborder-color: #dd0031;
+}
+
+nav {
+\tdisplay: flex;
+\tgap: 4rem;
+\tjustify-content: center;
+}
+
+header details {
+\tposition: relative;
+}
+
+header details summary {
+\tlist-style: none;
+\tappearance: none;
+\t-webkit-appearance: none;
+\tcursor: pointer;
+\tuser-select: none;
+\tcolor: #5fbeeb;
+\tfont-size: 1.5rem;
+\tfont-weight: 500;
+\tpadding: 0.5rem 1rem;
+}
+
+header summary::after {
+\tcontent: '▼';
+\tdisplay: inline-block;
+\tmargin-left: 0.5rem;
+\tfont-size: 0.75rem;
+\ttransition: transform 0.3s ease;
+}
+
+header details[open] summary::after {
+\ttransform: rotate(180deg);
+}
+
+header details nav {
+\tposition: absolute;
+\ttop: 100%;
+\tright: -0.5rem;
+\tdisplay: flex;
+\tflex-direction: column;
+\tgap: 0.75rem;
+\tbackground: rgba(185, 185, 185, 0.1);
+\tbackdrop-filter: blur(4px);
+\tborder: 1px solid #5fbeeb;
+\tborder-radius: 1rem;
+\tpadding: 1rem 1.5rem;
+\tbox-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+\topacity: 0;
+\ttransform: translateY(-8px);
+\tpointer-events: none;
+\ttransition: opacity 0.3s ease, transform 0.3s ease;
+\tz-index: 1000;
+}
+
+header details[open] nav {
+\topacity: 1;
+\ttransform: translateY(0);
+\tpointer-events: auto;
+}
+
+header details nav a {
+\tfont-size: 1.1rem;
+\tpadding: 0.25rem 0;
+\twhite-space: nowrap;
+}
+
+@media (max-width: 480px) {
+\theader { padding: 1rem; }
+\th1 { font-size: 1.75rem; }
+\t.logo { height: 5rem; width: 5rem; }
+\tnav { gap: 2rem; }
+\theader details summary { font-size: 1.2rem; }
+}
+
+@media (prefers-color-scheme: light) {
+\theader { background-color: #ffffff; }
+}
+`;
+    },
+    htmlTemplate: (name) => {
+      const fileName = name.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();
+      return `<header>
+\t<a href="/">AbsoluteJS</a>
+\t<details
+\t\tclass="dropdown"
+\t\t[attr.open]="isOpen ? '' : null"
+\t\t(mouseenter)="isOpen = true"
+\t\t(mouseleave)="isOpen = false"
+\t>
+\t\t<summary>Pages</summary>
+\t\t<nav class="menu">
+\t\t\t<a href="/">Home</a>
+\t\t</nav>
+\t</details>
+</header>
+<main>
+\t<nav>
+\t\t<a href="https://absolutejs.com" target="_blank">
+\t\t\t<img class="logo" src="/assets/png/absolutejs-temp.png" alt="AbsoluteJS Logo" />
+\t\t</a>
+\t\t<a href="https://angular.dev" target="_blank">
+\t\t\t<img class="logo angular" src="/assets/svg/angular.svg" alt="Angular Logo" />
+\t\t</a>
+\t</nav>
+\t<h1>AbsoluteJS + Angular</h1>
+\t<button (click)="increment()">count is {{ count }}</button>
+\t<p>Edit <code>src/frontend/angular/pages/${fileName}.ts</code> and save to test HMR.</p>
+\t<p style="margin-top: 2rem">Explore the other pages to see multiple frameworks running together.</p>
+\t<p style="color: #777; font-size: 1rem; margin-top: 2rem">Click on the AbsoluteJS and Angular logos to learn more.</p>
+</main>
+`;
+    },
   },
 };
 
