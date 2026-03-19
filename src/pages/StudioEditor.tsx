@@ -926,6 +926,10 @@ const StudioEditorInner = ({
     () => initialFrameworks?.configured[0]?.framework ?? "",
   );
   const previewPathRef = useRef("/");
+  const [navbarUrl, setNavbarUrl] = useState("/");
+  const [navHistory, setNavHistory] = useState<string[]>(["/"]);
+  const [navIndex, setNavIndex] = useState(0);
+  const navFromBarRef = useRef(false);
   const [inspectMode, setInspectMode] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [showInspector, setShowInspector] = useState(false);
@@ -959,6 +963,7 @@ const StudioEditorInner = ({
   }, []);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const iframeBackRef = useRef<HTMLIFrameElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const scriptsDropdownRef = useRef<HTMLDivElement>(null);
   const pagesDropdownRef = useRef<HTMLDivElement>(null);
@@ -1085,7 +1090,7 @@ const StudioEditorInner = ({
       });
       return data as { content: string } | null;
     },
-    enabled: !!currentPage?.file,
+    enabled: sourceEditorVisible && !!currentPage?.file,
   });
 
   const { data: types = {} } = useQuery({
@@ -1243,6 +1248,7 @@ const StudioEditorInner = ({
   useEffect(() => {
     if (pages.length > 0 && !currentPage) {
       setCurrentPage(pages[0]!);
+      setNavbarUrl(pages[0]!.route);
     }
   }, [pages, currentPage]);
 
@@ -1314,35 +1320,92 @@ const StudioEditorInner = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [inspectMode]);
 
-  // --- Handlers ---
-  const handlePageSelect = useCallback(async (page: PageInfo) => {
-    setCurrentPage(page);
-    setShowPages(false);
-    setSelectedElement(null);
-    const newPath = page.route;
-    if (newPath !== previewPathRef.current) {
-      previewPathRef.current = newPath;
-      // Fetch the new page HTML first, then write it into the iframe
-      // document in-place. This avoids the white flash that happens with
-      // any form of iframe navigation (src change or location.replace).
-      const url = `/preview?path=${encodeURIComponent(newPath)}`;
-      try {
-        const res = await fetch(url);
-        const html = await res.text();
-        const doc = iframeRef.current?.contentDocument;
-        if (doc) {
-          doc.open();
-          doc.write(html);
-          doc.close();
-        }
-      } catch {
-        // Fall back to normal navigation if fetch fails
-        if (iframeRef.current?.contentWindow) {
-          iframeRef.current.contentWindow.location.replace(url);
-        }
+  // --- Navigation helpers ---
+  const navigatePreview = useCallback(
+    async (path: string, pushHistory = true) => {
+      previewPathRef.current = path;
+      const url = `/preview?path=${encodeURIComponent(path)}`;
+      const back = iframeBackRef.current;
+      if (back) {
+        // Load the new page in the hidden back-buffer iframe.
+        // When it finishes, swap it to the front — no flash because
+        // the old content stays visible until the new page is ready.
+        back.onload = () => {
+          back.onload = null;
+          // Swap: move back-buffer to front, old front to back
+          const front = iframeRef.current;
+          if (front && back) {
+            front.style.display = "none";
+            back.style.display = "";
+            // Swap refs
+            iframeRef.current = back;
+            iframeBackRef.current = front;
+          }
+        };
+        back.src = url;
       }
-    }
-  }, []);
+      // Update navbar state AFTER doc.write so the re-render doesn't
+      // interfere with the iframe content swap.
+      setNavbarUrl(path);
+      if (pushHistory) {
+        setNavHistory((prev) => {
+          const trimmed = prev.slice(0, navIndex + 1);
+          return [...trimmed, path];
+        });
+        setNavIndex((i) => i + 1);
+      }
+    },
+    [navIndex],
+  );
+
+  const handleNavBack = useCallback(() => {
+    if (navIndex <= 0) return;
+    const newIndex = navIndex - 1;
+    setNavIndex(newIndex);
+    const path = navHistory[newIndex] ?? "/";
+    navigatePreview(path, false);
+    // Also update currentPage if it matches a known page
+    const match = pages.find((p) => p.route === path);
+    if (match) setCurrentPage(match);
+  }, [navIndex, navHistory, navigatePreview, pages]);
+
+  const handleNavForward = useCallback(() => {
+    if (navIndex >= navHistory.length - 1) return;
+    const newIndex = navIndex + 1;
+    setNavIndex(newIndex);
+    const path = navHistory[newIndex] ?? "/";
+    navigatePreview(path, false);
+    const match = pages.find((p) => p.route === path);
+    if (match) setCurrentPage(match);
+  }, [navIndex, navHistory, navigatePreview, pages]);
+
+  const handleNavRefresh = useCallback(() => {
+    navigatePreview(previewPathRef.current, false);
+  }, [navigatePreview]);
+
+  const handleNavSubmit = useCallback(
+    (url: string) => {
+      const path = url.startsWith("/") ? url : `/${url}`;
+      navigatePreview(path);
+      const match = pages.find((p) => p.route === path);
+      if (match) setCurrentPage(match);
+    },
+    [navigatePreview, pages],
+  );
+
+  // --- Handlers ---
+  const handlePageSelect = useCallback(
+    async (page: PageInfo) => {
+      setCurrentPage(page);
+      setShowPages(false);
+      setSelectedElement(null);
+      const newPath = page.route;
+      if (newPath !== previewPathRef.current) {
+        navigatePreview(newPath);
+      }
+    },
+    [navigatePreview],
+  );
 
   const handleCreatePage = useCallback(async () => {
     const name = newPageName.trim();
@@ -1363,12 +1426,7 @@ const StudioEditorInner = ({
     }
 
     // Navigate to the new route
-    previewPathRef.current = route;
-    if (iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.location.replace(
-        `/preview?path=${encodeURIComponent(route)}`,
-      );
-    }
+    navigatePreview(route);
     setNewPageName("");
     setNewPageRoute("");
     setShowPages(false);
@@ -1386,7 +1444,14 @@ const StudioEditorInner = ({
     if (created) {
       setCurrentPage(created);
     }
-  }, [newPageName, newPageRoute, newPageFramework, createPage, qc]);
+  }, [
+    newPageName,
+    newPageRoute,
+    newPageFramework,
+    createPage,
+    qc,
+    navigatePreview,
+  ]);
 
   const handleDeletePage = useCallback(
     async (page: PageInfo) => {
@@ -1399,13 +1464,8 @@ const StudioEditorInner = ({
           (p) => p.route === "/" && p.route !== page.route,
         );
         setCurrentPage(homePage ?? null);
-        previewPathRef.current = "/";
         // Navigate iframe away from the page being deleted
-        if (iframeRef.current?.contentWindow) {
-          iframeRef.current.contentWindow.location.replace(
-            `/preview?path=${encodeURIComponent("/")}`,
-          );
-        }
+        navigatePreview("/");
 
         // Give the iframe a moment to navigate before we trigger HMR
         await new Promise((r) => setTimeout(r, 300));
@@ -1425,7 +1485,7 @@ const StudioEditorInner = ({
         setDeletingRoute(null);
       }
     },
-    [deletePageMutation, currentPage, pages],
+    [deletePageMutation, currentPage, pages, navigatePreview],
   );
 
   const handleReorganizeConfirm = useCallback(async () => {
@@ -2309,13 +2369,97 @@ const StudioEditorInner = ({
   const initialPreviewUrl = useRef(`/preview?path=${encodeURIComponent("/")}`);
 
   const renderPreview = () => (
-    <iframe
-      ref={iframeRef}
-      className="studio-preview-frame"
-      src={initialPreviewUrl.current}
-      title="Preview"
-      onLoad={handleIframeLoad}
-    />
+    <>
+      <div className="studio-navbar">
+        <button
+          className="studio-navbar-btn"
+          disabled={navIndex <= 0}
+          onClick={handleNavBack}
+          title="Back"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M10 3L5 8L10 13" />
+          </svg>
+        </button>
+        <button
+          className="studio-navbar-btn"
+          disabled={navIndex >= navHistory.length - 1}
+          onClick={handleNavForward}
+          title="Forward"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M6 3L11 8L6 13" />
+          </svg>
+        </button>
+        <button
+          className="studio-navbar-btn"
+          onClick={handleNavRefresh}
+          title="Refresh"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5" />
+            <path d="M13.5 2.5V6H10" />
+          </svg>
+        </button>
+        <form
+          className="studio-navbar-url"
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleNavSubmit(navbarUrl);
+            (e.target as HTMLFormElement).querySelector("input")?.blur();
+          }}
+        >
+          <input
+            className="studio-navbar-input"
+            value={navbarUrl}
+            onChange={(e) => setNavbarUrl(e.target.value)}
+            onFocus={(e) => e.target.select()}
+            spellCheck={false}
+          />
+        </form>
+      </div>
+      <iframe
+        ref={iframeRef}
+        className="studio-preview-frame"
+        src={initialPreviewUrl.current}
+        title="Preview"
+        onLoad={handleIframeLoad}
+      />
+      <iframe
+        ref={iframeBackRef}
+        className="studio-preview-frame"
+        style={{ display: "none" }}
+        title="Preview"
+        onLoad={handleIframeLoad}
+      />
+    </>
   );
 
   const activeTab = tabs.find((t) => t.path === activeTabPath);
@@ -2911,15 +3055,16 @@ const StudioEditorInner = ({
                   onMouseDown={handleSplitMouseDown}
                 />
               )}
-              <div
-                className="studio-split-pane"
-                style={{
-                  flex: layout === "split" ? 100 - splitRatio : 1,
-                  display: sourceVisible ? undefined : "none",
-                }}
-              >
-                {renderSource()}
-              </div>
+              {sourceVisible && (
+                <div
+                  className="studio-split-pane"
+                  style={{
+                    flex: layout === "split" ? 100 - splitRatio : 1,
+                  }}
+                >
+                  {renderSource()}
+                </div>
+              )}
             </div>
 
             {/* Right sidebar - Inspector */}

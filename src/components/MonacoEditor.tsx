@@ -1652,7 +1652,6 @@ export const MonacoEditor = ({
         newModel = m.editor.createModel(newValue, lang, newUri);
       }
 
-      // Set model on editor
       editor.setModel(newModel);
       modelRef.current = newModel;
 
