@@ -925,7 +925,7 @@ const StudioEditorInner = ({
   const [newPageFramework, setNewPageFramework] = useState(
     () => initialFrameworks?.configured[0]?.framework ?? "",
   );
-  const [previewPath, setPreviewPath] = useState("/");
+  const previewPathRef = useRef("/");
   const [inspectMode, setInspectMode] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [showInspector, setShowInspector] = useState(false);
@@ -1315,11 +1315,33 @@ const StudioEditorInner = ({
   }, [inspectMode]);
 
   // --- Handlers ---
-  const handlePageSelect = useCallback((page: PageInfo) => {
+  const handlePageSelect = useCallback(async (page: PageInfo) => {
     setCurrentPage(page);
     setShowPages(false);
     setSelectedElement(null);
-    setPreviewPath(page.route);
+    const newPath = page.route;
+    if (newPath !== previewPathRef.current) {
+      previewPathRef.current = newPath;
+      // Fetch the new page HTML first, then write it into the iframe
+      // document in-place. This avoids the white flash that happens with
+      // any form of iframe navigation (src change or location.replace).
+      const url = `/preview?path=${encodeURIComponent(newPath)}`;
+      try {
+        const res = await fetch(url);
+        const html = await res.text();
+        const doc = iframeRef.current?.contentDocument;
+        if (doc) {
+          doc.open();
+          doc.write(html);
+          doc.close();
+        }
+      } catch {
+        // Fall back to normal navigation if fetch fails
+        if (iframeRef.current?.contentWindow) {
+          iframeRef.current.contentWindow.location.replace(url);
+        }
+      }
+    }
   }, []);
 
   const handleCreatePage = useCallback(async () => {
@@ -1341,7 +1363,12 @@ const StudioEditorInner = ({
     }
 
     // Navigate to the new route
-    setPreviewPath(route);
+    previewPathRef.current = route;
+    if (iframeRef.current?.contentWindow) {
+      iframeRef.current.contentWindow.location.replace(
+        `/preview?path=${encodeURIComponent(route)}`,
+      );
+    }
     setNewPageName("");
     setNewPageRoute("");
     setShowPages(false);
@@ -1372,7 +1399,13 @@ const StudioEditorInner = ({
           (p) => p.route === "/" && p.route !== page.route,
         );
         setCurrentPage(homePage ?? null);
-        setPreviewPath("/");
+        previewPathRef.current = "/";
+        // Navigate iframe away from the page being deleted
+        if (iframeRef.current?.contentWindow) {
+          iframeRef.current.contentWindow.location.replace(
+            `/preview?path=${encodeURIComponent("/")}`,
+          );
+        }
 
         // Give the iframe a moment to navigate before we trigger HMR
         await new Promise((r) => setTimeout(r, 300));
@@ -2273,13 +2306,13 @@ const StudioEditorInner = ({
   const previewVisible = layout === "preview" || layout === "split";
   const sourceVisible = layout === "source" || layout === "split";
 
-  const previewUrl = `/preview?path=${encodeURIComponent(previewPath)}`;
+  const initialPreviewUrl = useRef(`/preview?path=${encodeURIComponent("/")}`);
 
   const renderPreview = () => (
     <iframe
       ref={iframeRef}
       className="studio-preview-frame"
-      src={previewUrl}
+      src={initialPreviewUrl.current}
       title="Preview"
       onLoad={handleIframeLoad}
     />
